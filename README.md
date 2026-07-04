@@ -27,3 +27,4 @@ Node lives at `~/.local/node/bin` (no system install yet); see docs/phase-0-setu
 3. Store publication end-to-end (see plan: closed-test 12 testers / 14 days on Play)
 4. Games 2–5 on the validated template
 # games
+# games
