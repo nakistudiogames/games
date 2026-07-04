@@ -9,6 +9,7 @@ wrapped with Capacitor for iOS/Android, monetized with AdMob (ads only).
 - `packages/ui` — shared Phaser helpers (floatBanner, textButton)
 - `games/block-blast` — pilot game: 8x8 grid puzzle, drag 3 pieces, clear lines
 - `games/merge-2048` — game #2: classic 4x4 merge, swipe/arrow keys
+- `games/flap-dash` — game #3: endless tap arcade, difficulty ramps with score
 - `docs/` — runbooks (start with `phase-0-setup.md`)
 
 ## Commands (repo root)
@@ -16,6 +17,7 @@ wrapped with Capacitor for iOS/Android, monetized with AdMob (ads only).
 npm install
 npm run dev        # block-blast dev server (browser)
 npm run dev:2048   # merge-2048 dev server (browser)
+npm run dev:flap   # flap-dash dev server (browser)
 npm test           # vitest across workspaces
 npm run typecheck
 npm run build
