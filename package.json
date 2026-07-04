@@ -1,0 +1,21 @@
+{
+  "name": "mobile-games",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "packages/*",
+    "games/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w games/block-blast",
+    "dev:2048": "npm run dev -w games/merge-2048",
+    "dev:flap": "npm run dev -w games/flap-dash",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}
