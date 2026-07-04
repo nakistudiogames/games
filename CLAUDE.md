@@ -44,6 +44,13 @@ games/flap-dash    Game #3, browser-playable. Flappy-style endless arcade: pure
                    physics/gates/collision in src/logic/flight.ts (tested); gap
                    shrinks 360→250 and speed ramps 320→540 with score; tap/space
                    to flap; rewarded revive = clear near gates + 1.5s invuln.
+games/word-rush    Game #4, browser-playable. Wordle-style endless streak: word
+                   lists bundled in src/data/words.ts (2315 answers + 10657
+                   allowed, cfreshman gists, no trailing newline in source —
+                   don't trust wc -l); duplicate-correct evaluateGuess in
+                   src/logic/words.ts (tested); on-screen QWERTY + physical
+                   keyboard; rewarded hint reveals one unsolved letter/round;
+                   interstitial when out of guesses. "highScore" = best streak.
 docs/           Runbooks — phase-0-setup.md is the user's account/toolchain checklist
 ```
 
@@ -52,7 +59,8 @@ docs/           Runbooks — phase-0-setup.md is the user's account/toolchain ch
 npm run dev        # block-blast on Vite dev server
 npm run dev:2048   # merge-2048 on Vite dev server
 npm run dev:flap   # flap-dash on Vite dev server
-npm test           # vitest (block-blast 15 + merge-2048 12 + flap-dash 9, all green)
+npm run dev:word   # word-rush on Vite dev server
+npm test           # vitest (15 + 12 + 9 + 8 = 44 tests, all green)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)
 ```
@@ -68,15 +76,15 @@ npm run build      # production bundle (vite base './' so file:// works in Capac
 - Interstitial fires at game over (cooldown-capped in @mg/ads)
 
 ## Status / next steps
-1. ✅ Monorepo + games 1-3 (block-blast, merge-2048, flap-dash) playable in
-   browser; tests/typecheck/build green (2026-07-04). Publication still pilot-first.
+1. ✅ Monorepo + games 1-4 (block-blast, merge-2048, flap-dash, word-rush)
+   playable in browser; tests/typecheck/build green (2026-07-04).
+   Publication still pilot-first.
 2. ⏳ USER: Phase 0 accounts — Play Console ($25; new personal accounts need a
    closed test with **12 testers opted in for 14 consecutive days per app** before
    production), Apple Developer ($99/yr), AdMob + tax info, Xcode + Android Studio
 3. Next Claude step once #2 lands: `npx cap add ios android` in games/block-blast,
    validate AdmobAds on real devices with test ads, then store listings + publish
-4. After pilot ships: remaining game candidates for #4/#5: word puzzle
-   (needs a bundled dictionary), solitaire / minimalist card game
+4. Game #5 candidate: solitaire / minimalist card game
 
 ## Ongoing ops (Phase 5, once games are live)
 Weekly revenue/retention reports, review-reply drafting, SDK update checks —

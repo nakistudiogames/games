@@ -10,6 +10,7 @@
     "dev": "npm run dev -w games/block-blast",
     "dev:2048": "npm run dev -w games/merge-2048",
     "dev:flap": "npm run dev -w games/flap-dash",
+    "dev:word": "npm run dev -w games/word-rush",
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present"
