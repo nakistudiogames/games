@@ -1,0 +1,12 @@
+# Unity generated
+/Library/
+/Temp/
+/Obj/
+/Logs/
+/UserSettings/
+/Build/
+/Builds/
+*.csproj
+*.sln
+.vsconfig
+.DS_Store

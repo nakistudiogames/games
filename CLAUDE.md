@@ -133,7 +133,24 @@ games/cube-dash    Game #5, browser-playable. Geometry-Dash-style auto-runner
                    spawn 2400-4000px apart in obstacle-free spots, first at
                    1500px): doubleJump = 10s of one extra air jump, recharged
                    on landing; gold diamond pickup, aura + "⇈ Ns" badge.
-docs/           Runbooks — phase-0-setup.md is the user's account/toolchain checklist
+unity/CubeDash  UNITY PORT of cube-dash for an engine comparison (2026-07-05):
+                full gameplay parity, no ads, editor-only. NOT in npm
+                workspaces. All C# written; NOT yet compiled/verified — Unity
+                is not installed (user step: docs/unity-compare-setup.md; then
+                update ProjectSettings/ProjectVersion.txt to their version and
+                run EditMode tests headless — command in that doc). Structure
+                mirrors the web build: Assets/Scripts/Logic (pure C# ports of
+                runner/characters/worlds + bit-exact Mulberry32 — same seeds
+                => same layouts, proven by RngParityTests fixtures generated
+                from the TS impl), View (all textures painted at runtime via
+                Painter, aura MonoBehaviours), Game (Bootstrap spawns
+                everything into an empty scene — no authored scene assets;
+                Flow/GameController/MenuController; PlayerPrefs uses the SAME
+                storage keys), Audio (OnAudioFilterRead synth port of the
+                16-step MusicPlayer + sfx blips). Logic space stays y-DOWN
+                720x1280 pixels; the view layer flips y once (Px.V).
+docs/           Runbooks — phase-0-setup.md is the user's account/toolchain checklist;
+                unity-compare-setup.md is the Unity Hub/editor install checklist
 ```
 
 ## Commands (repo root; remember the PATH prefix)
