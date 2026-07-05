@@ -9,11 +9,15 @@ import {
   checkDeath,
   collectsPowerUp,
   jump,
+  levelColor,
+  levelGapScale,
+  levelLengthM,
+  levelSeed,
+  levelSpeed,
   makePowerUp,
   minGapPx,
   pickPattern,
   powerUpGapPx,
-  speedForDistance,
   stepRunner,
   supportAt,
   tryJump,
@@ -31,6 +35,10 @@ const REVIVE_CLEAR_PX = 900;
 const MAX_DT_MS = 50;
 /** Tap slightly before landing still triggers a jump on touchdown. */
 const JUMP_BUFFER_MS = 110;
+/** Distance until the first pickup — early, so players learn the mechanic. */
+const FIRST_POWERUP_PX = 1500;
+/** No obstacles/pickups spawn once the finish is closer than this. */
+const CLEAR_RUNWAY_PX = 1200;
 
 interface ObstacleView {
   obs: Obstacle;
@@ -42,56 +50,63 @@ interface PowerUpView {
   view: Phaser.GameObjects.Container;
 }
 
-/** Distance until the first pickup — early, so players learn the mechanic. */
-const FIRST_POWERUP_PX = 1500;
-
-type Phase = "ready" | "playing" | "dead";
+type Phase = "ready" | "playing" | "dead" | "complete";
 
 export class GameScene extends Phaser.Scene {
+  private levelNum = 1;
+  private levelLengthPx = 0;
   private runner!: Runner;
   private playerView!: Phaser.GameObjects.Container;
   private playerShadow!: Phaser.GameObjects.Image;
+  private aura!: Phaser.GameObjects.Rectangle;
   private trail!: Phaser.GameObjects.Particles.ParticleEmitter;
   private dust!: Phaser.GameObjects.Particles.ParticleEmitter;
+  private sparkle!: Phaser.GameObjects.Particles.ParticleEmitter;
   private burst!: Phaser.GameObjects.Particles.ParticleEmitter;
   private bgFar!: Phaser.GameObjects.TileSprite;
   private bgMid!: Phaser.GameObjects.TileSprite;
   private groundTile!: Phaser.GameObjects.TileSprite;
   private obstacles: ObstacleView[] = [];
   private powerUps: PowerUpView[] = [];
-  private aura!: Phaser.GameObjects.Rectangle;
-  private sparkle!: Phaser.GameObjects.Particles.ParticleEmitter;
-  private powerBadge!: Phaser.GameObjects.Text;
-  private doubleJumpMs = 0;
-  private nextPowerUpAt = FIRST_POWERUP_PX;
+  private finishView: Phaser.GameObjects.Container | null = null;
   private rng!: Rng;
   private phase: Phase = "ready";
   private distancePx = 0;
   private scoreText!: Phaser.GameObjects.Text;
+  private levelText!: Phaser.GameObjects.Text;
+  private powerBadge!: Phaser.GameObjects.Text;
+  private progressFill!: Phaser.GameObjects.Rectangle;
   private readyText: Phaser.GameObjects.Text | null = null;
   private muteButton!: Phaser.GameObjects.Text;
   private usedContinue = false;
   private invulnMs = 0;
   private jumpBufferMs = 0;
-  private lastMilestone = 0;
+  private doubleJumpMs = 0;
+  private nextPowerUpAt = FIRST_POWERUP_PX;
 
   constructor() {
     super("game");
   }
 
+  init(data: { level?: number }): void {
+    this.levelNum = Math.max(1, data.level ?? 1);
+  }
+
   create(): void {
+    this.levelLengthPx = levelLengthM(this.levelNum) * 10;
     this.runner = { y: GROUND_Y, vy: 0, grounded: true, airJumpUsed: false };
     this.obstacles = [];
     this.powerUps = [];
-    this.doubleJumpMs = 0;
-    this.nextPowerUpAt = FIRST_POWERUP_PX;
-    this.rng = new Rng();
+    this.finishView = null;
+    // Seeded per level: every attempt at a level has the identical layout.
+    this.rng = new Rng(levelSeed(this.levelNum));
     this.phase = "ready";
     this.distancePx = 0;
     this.usedContinue = false;
     this.invulnMs = 0;
     this.jumpBufferMs = 0;
-    this.lastMilestone = 0;
+    this.doubleJumpMs = 0;
+    this.nextPowerUpAt = FIRST_POWERUP_PX;
 
     this.ensureTextures();
     this.buildBackground();
@@ -99,12 +114,23 @@ export class GameScene extends Phaser.Scene {
     this.buildHud();
 
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
-      // Ignore taps on the mute button.
       if (this.muteButton.getBounds().contains(p.x, p.y)) return;
       this.onTap();
     });
     this.input.keyboard?.on("keydown-SPACE", () => this.onTap());
     this.input.keyboard?.on("keydown-UP", () => this.onTap());
+  }
+
+  private remainingPx(): number {
+    return this.levelLengthPx - this.distancePx;
+  }
+
+  private progressPct(): number {
+    return Math.min(100, Math.floor((this.distancePx / this.levelLengthPx) * 100));
+  }
+
+  private levelColorHex(level: number): string {
+    return `#${levelColor(level).toString(16).padStart(6, "0")}`;
   }
 
   /** All art is generated at runtime — no image assets to load or license. */
@@ -169,6 +195,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private buildBackground(): void {
+    const accent = levelColor(this.levelNum);
+
     const sky = this.add.graphics().setDepth(0);
     sky.fillGradientStyle(0x0b0e24, 0x0b0e24, 0x2a1650, 0x1a1240, 1);
     sky.fillRect(0, 0, WORLD_WIDTH, GROUND_Y);
@@ -195,9 +223,10 @@ export class GameScene extends Phaser.Scene {
     const groundFade = this.add.graphics().setDepth(4);
     groundFade.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0, 0, 0.65, 0.65);
     groundFade.fillRect(0, GROUND_Y, WORLD_WIDTH, WORLD_HEIGHT - GROUND_Y);
-    // Neon edge on the ground plus a soft glow above it.
-    this.add.rectangle(0, GROUND_Y - 10, WORLD_WIDTH, 10, 0x26c6da, 0.12).setOrigin(0).setDepth(5);
-    this.add.rectangle(0, GROUND_Y - 3, WORLD_WIDTH, 5, 0x4dd0e1).setOrigin(0).setDepth(5);
+
+    // Neon edge on the ground plus a soft glow above it, in the level color.
+    this.add.rectangle(0, GROUND_Y - 10, WORLD_WIDTH, 10, accent, 0.12).setOrigin(0).setDepth(5);
+    this.add.rectangle(0, GROUND_Y - 3, WORLD_WIDTH, 5, accent).setOrigin(0).setDepth(5);
   }
 
   private buildPlayer(): void {
@@ -270,8 +299,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private buildHud(): void {
+    const hex = this.levelColorHex(this.levelNum);
+
     this.scoreText = this.add
-      .text(WORLD_WIDTH / 2, 110, "0m", {
+      .text(WORLD_WIDTH / 2, 110, "0%", {
         fontFamily: "Arial Black, sans-serif",
         fontSize: "72px",
         color: "#ffffff",
@@ -279,6 +310,24 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(20);
     this.scoreText.setShadow(0, 6, "#000000", 8, false, true);
+
+    this.levelText = this.add
+      .text(WORLD_WIDTH / 2, 172, `LEVEL ${this.levelNum}`, {
+        fontFamily: "Arial, sans-serif",
+        fontSize: "34px",
+        color: hex,
+      })
+      .setOrigin(0.5)
+      .setDepth(20);
+    this.levelText.setShadow(0, 4, "#000000", 6, false, true);
+
+    // Progress bar across the top, GD-style.
+    this.add.rectangle(160, 36, 400, 10, 0x232b3e).setOrigin(0, 0.5).setDepth(20);
+    this.progressFill = this.add
+      .rectangle(160, 36, 400, 10, levelColor(this.levelNum))
+      .setOrigin(0, 0.5)
+      .setScale(0, 1)
+      .setDepth(21);
 
     this.powerBadge = this.add
       .text(40, 70, "", {
@@ -305,10 +354,11 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.readyText = this.add
-      .text(WORLD_WIDTH / 2, 700, "TAP TO JUMP", {
+      .text(WORLD_WIDTH / 2, 700, `LEVEL ${this.levelNum}\nTAP TO START`, {
         fontFamily: "Arial, sans-serif",
         fontSize: "52px",
         color: "#a5d6a7",
+        align: "center",
       })
       .setOrigin(0.5)
       .setDepth(20);
@@ -345,7 +395,7 @@ export class GameScene extends Phaser.Scene {
   override update(time: number, deltaMs: number): void {
     if (this.phase !== "playing") return;
     const dt = Math.min(deltaMs, MAX_DT_MS) / 1000;
-    const speed = speedForDistance(this.distancePx);
+    const speed = levelSpeed(this.levelNum);
     this.distancePx += speed * dt;
 
     // Parallax: far stars drift, skyline rolls, ground grid matches the track.
@@ -362,6 +412,7 @@ export class GameScene extends Phaser.Scene {
     }
     this.maybeSpawnPattern(speed);
     this.updatePowerUps(speed, dt, deltaMs);
+    this.updateFinish();
 
     const obsList = this.obstacles.map((o) => o.obs);
     const wasAirborne = !this.runner.grounded;
@@ -383,12 +434,12 @@ export class GameScene extends Phaser.Scene {
     const shadowF = Math.max(0.25, 1 - airHeight / 500);
     this.playerShadow.setScale(1.25 * shadowF, shadowF).setAlpha(0.35 + 0.45 * shadowF);
 
-    const meters = Math.floor(this.distancePx / 10);
-    this.scoreText.setText(`${meters}m`);
-    if (meters >= this.lastMilestone + 100) {
-      this.lastMilestone += 100;
-      floatBanner(this, `${this.lastMilestone}m!`, 420, "64px", "#26c6da");
-      sfx.clear(1);
+    this.scoreText.setText(`${this.progressPct()}%`);
+    this.progressFill.setScale(Math.min(1, this.distancePx / this.levelLengthPx), 1);
+
+    if (this.remainingPx() <= 40) {
+      this.completeLevel();
+      return;
     }
 
     if (this.invulnMs > 0) {
@@ -398,6 +449,37 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (checkDeath(this.runner.y, obsList)) this.die();
+  }
+
+  /** The finish line scrolls in with the track once it's within reach. */
+  private updateFinish(): void {
+    const remaining = this.remainingPx();
+    if (!this.finishView && remaining < WORLD_WIDTH + 400) {
+      this.finishView = this.buildFinishView();
+    }
+    if (this.finishView) {
+      this.finishView.x = PLAYER_X + remaining;
+    }
+  }
+
+  private buildFinishView(): Phaser.GameObjects.Container {
+    const container = this.add.container(WORLD_WIDTH + 200, 0).setDepth(8);
+    const accent = levelColor(this.levelNum);
+    // Glowing pole from ground to sky with a checkered flag block.
+    container.add(this.add.rectangle(0, GROUND_Y - 420, 26, 420, 0x0c0e14, 0.6).setOrigin(0.5, 0));
+    container.add(this.add.rectangle(0, GROUND_Y - 420, 8, 420, accent).setOrigin(0.5, 0));
+    const cell = 16;
+    for (let r = 0; r < 4; r++) {
+      for (let c = 0; c < 2; c++) {
+        const dark = (r + c) % 2 === 0;
+        container.add(
+          this.add
+            .rectangle(8 + c * cell, GROUND_Y - 420 + r * cell, cell, cell, dark ? 0x111111 : 0xffffff)
+            .setOrigin(0, 0),
+        );
+      }
+    }
+    return container;
   }
 
   private updatePowerUps(speed: number, dt: number, deltaMs: number): void {
@@ -418,8 +500,9 @@ export class GameScene extends Phaser.Scene {
       return true;
     });
 
-    // Spawn the next pickup once due, in a spot clear of obstacles.
-    if (this.distancePx >= this.nextPowerUpAt) {
+    // Spawn the next pickup once due, in a spot clear of obstacles,
+    // and never on the finish runway.
+    if (this.distancePx >= this.nextPowerUpAt && this.remainingPx() > CLEAR_RUNWAY_PX) {
       const x = WORLD_WIDTH + 60;
       const blocked = this.obstacles.some(
         ({ obs }) => obs.x < x + 160 && obs.x + obs.w > x - 160,
@@ -479,10 +562,13 @@ export class GameScene extends Phaser.Scene {
   }
 
   private maybeSpawnPattern(speed: number): void {
+    // Leave a clean runway before the finish line.
+    if (this.remainingPx() < CLEAR_RUNWAY_PX) return;
+    const gap = minGapPx(speed) * levelGapScale(this.levelNum);
     const last = this.obstacles[this.obstacles.length - 1];
     const lastEnd = last ? last.obs.x + last.obs.w : -Infinity;
-    if (lastEnd > WORLD_WIDTH + 40 - minGapPx(speed)) return;
-    const startX = Math.max(WORLD_WIDTH + 40, lastEnd + minGapPx(speed));
+    if (lastEnd > WORLD_WIDTH + 40 - gap) return;
+    const startX = Math.max(WORLD_WIDTH + 40, lastEnd + gap);
     const pattern = pickPattern(this.rng, speed);
     for (const spec of pattern.obstacles) {
       const obs: Obstacle = { x: startX + spec.dx, w: spec.w, h: spec.h, kind: spec.kind };
@@ -534,6 +620,82 @@ export class GameScene extends Phaser.Scene {
     return container;
   }
 
+  private bumpBestPct(pct: number): number {
+    const key = `bestPct:${this.levelNum}`;
+    const best = Math.max(storage.get(key, 0), pct);
+    storage.set(key, best);
+    return best;
+  }
+
+  private completeLevel(): void {
+    this.phase = "complete";
+    this.trail.emitting = false;
+    this.bumpBestPct(100);
+    const unlocked = storage.get("unlockedLevel", 1);
+    if (this.levelNum + 1 > unlocked) storage.set("unlockedLevel", this.levelNum + 1);
+    sfx.clear(4);
+    music.stop();
+    this.sparkle.explode(30, this.playerView.x, this.playerView.y);
+    void adsReady.then((ads) => ads.maybeShowInterstitial());
+
+    const { width, height } = this.scale;
+    const overlay = this.add.container(0, 0).setDepth(100);
+    overlay.add(this.add.rectangle(0, 0, width, height, 0x000000, 0.78).setOrigin(0));
+    overlay.add(
+      this.add
+        .text(width / 2, height * 0.28, "LEVEL\nCOMPLETE!", {
+          fontFamily: "Arial Black, sans-serif",
+          fontSize: "84px",
+          color: this.levelColorHex(this.levelNum),
+          align: "center",
+        })
+        .setOrigin(0.5)
+        .setShadow(0, 8, "#000000", 10, false, true),
+    );
+    overlay.add(
+      this.add
+        .text(width / 2, height * 0.44, `Level ${this.levelNum} cleared\nLevel ${this.levelNum + 1} unlocked!`, {
+          fontFamily: "Arial, sans-serif",
+          fontSize: "44px",
+          color: "#ffd54f",
+          align: "center",
+        })
+        .setOrigin(0.5),
+    );
+    overlay.add(
+      textButton(
+        this,
+        width / 2,
+        height * 0.58,
+        "▶  NEXT LEVEL",
+        { text: "#a5d6a7", background: "#1e3320" },
+        () => this.scene.restart({ level: this.levelNum + 1 }),
+      ),
+    );
+    overlay.add(
+      textButton(
+        this,
+        width / 2,
+        height * 0.68,
+        "↻  REPLAY",
+        { text: "#ffd54f", background: "#332e1a" },
+        () => this.scene.restart({ level: this.levelNum }),
+        "44px",
+      ),
+    );
+    overlay.add(
+      textButton(
+        this,
+        width / 2,
+        height * 0.77,
+        "☰  MENU",
+        { text: "#90caf9", background: "#16283d" },
+        () => this.scene.start("menu"),
+        "40px",
+      ),
+    );
+  }
+
   private die(): void {
     this.phase = "dead";
     this.trail.emitting = false;
@@ -545,8 +707,8 @@ export class GameScene extends Phaser.Scene {
     sfx.gameOver();
     music.stop();
     this.cameras.main.shake(200, 0.01);
-    const meters = Math.floor(this.distancePx / 10);
-    const best = storage.bumpHighScore(meters);
+    const pct = this.progressPct();
+    const best = this.bumpBestPct(pct);
     void adsReady.then((ads) => ads.maybeShowInterstitial());
 
     const { width, height } = this.scale;
@@ -554,26 +716,22 @@ export class GameScene extends Phaser.Scene {
     overlay.add(this.add.rectangle(0, 0, width, height, 0x000000, 0.78).setOrigin(0));
     overlay.add(
       this.add
-        .text(width / 2, height * 0.3, "CRASHED!", {
+        .text(width / 2, height * 0.28, `CRASHED\nAT ${pct}%`, {
           fontFamily: "Arial Black, sans-serif",
           fontSize: "80px",
           color: "#ffffff",
+          align: "center",
         })
-        .setOrigin(0.5),
+        .setOrigin(0.5)
+        .setShadow(0, 8, "#000000", 10, false, true),
     );
     overlay.add(
       this.add
-        .text(
-          width / 2,
-          height * 0.42,
-          `Distance: ${meters}m\n${meters >= best && meters > 0 ? "New best!" : `Best: ${best}m`}`,
-          {
-            fontFamily: "Arial, sans-serif",
-            fontSize: "48px",
-            color: "#ffd54f",
-            align: "center",
-          },
-        )
+        .text(width / 2, height * 0.43, `Level ${this.levelNum}  ·  Best: ${best}%`, {
+          fontFamily: "Arial, sans-serif",
+          fontSize: "46px",
+          color: "#ffd54f",
+        })
         .setOrigin(0.5),
     );
 
@@ -581,10 +739,21 @@ export class GameScene extends Phaser.Scene {
       textButton(
         this,
         width / 2,
-        height * 0.58,
-        "▶  PLAY AGAIN",
+        height * 0.56,
+        "↻  RETRY",
         { text: "#a5d6a7", background: "#1e3320" },
-        () => this.scene.restart(),
+        () => this.scene.restart({ level: this.levelNum }),
+      ),
+    );
+    overlay.add(
+      textButton(
+        this,
+        width / 2,
+        height * 0.75,
+        "☰  MENU",
+        { text: "#90caf9", background: "#16283d" },
+        () => this.scene.start("menu"),
+        "40px",
       ),
     );
 
@@ -595,7 +764,7 @@ export class GameScene extends Phaser.Scene {
             textButton(
               this,
               width / 2,
-              height * 0.7,
+              height * 0.655,
               "🎬  KEEP RUNNING (AD)",
               { text: "#90caf9", background: "#16283d" },
               () => {
@@ -617,8 +786,11 @@ export class GameScene extends Phaser.Scene {
     overlay.destroy();
     this.obstacles = this.obstacles.filter(({ obs, view }) => {
       const near = obs.x < PLAYER_X + REVIVE_CLEAR_PX;
-      if (near) view.destroy();
-      return !near;
+      if (near) {
+        view.destroy();
+        return false;
+      }
+      return true;
     });
     this.runner.y = GROUND_Y;
     this.runner.vy = 0;

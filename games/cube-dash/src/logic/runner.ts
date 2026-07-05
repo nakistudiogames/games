@@ -35,8 +35,46 @@ export interface Obstacle {
   kind: ObstacleKind;
 }
 
-export function speedForDistance(distancePx: number): number {
-  return Math.min(MAX_SPEED, BASE_SPEED + distancePx / 12);
+// ---------------------------------------------------------------------------
+// Level system: discrete, selectable levels. Each is a fixed-length run with
+// a finish line; clearing it unlocks the next. Difficulty and layout are a
+// function of the level number, and the layout is seeded so every attempt at
+// a level is identical — memorizable, Geometry-Dash style.
+
+export const LEVEL_SPEED_STEP = 40;
+const LEVEL_BASE_LENGTH_M = 600;
+const LEVEL_LENGTH_STEP_M = 150;
+const LEVEL_MAX_LENGTH_M = 1500;
+
+/** Levels get longer as they get harder, up to a cap. */
+export function levelLengthM(level: number): number {
+  return Math.min(LEVEL_MAX_LENGTH_M, LEVEL_BASE_LENGTH_M + (level - 1) * LEVEL_LENGTH_STEP_M);
+}
+
+/** Deterministic seed per level so its obstacle layout never changes. */
+export function levelSeed(level: number): number {
+  return level * 7919;
+}
+
+export function levelSpeed(level: number): number {
+  return Math.min(MAX_SPEED, BASE_SPEED + (level - 1) * LEVEL_SPEED_STEP);
+}
+
+/**
+ * Scales the gap between obstacle patterns: early levels are roomy, later
+ * ones tighten toward the floor. Floor keeps every level clearable (see test).
+ */
+export function levelGapScale(level: number): number {
+  return Math.max(0.75, 1.2 - 0.06 * (level - 1));
+}
+
+/** Accent color per level, cycling — the visible "new world" cue. */
+export const LEVEL_COLORS: readonly number[] = [
+  0x4dd0e1, 0x66bb6a, 0xffca28, 0xff7043, 0xab47bc, 0xef5350,
+];
+
+export function levelColor(level: number): number {
+  return LEVEL_COLORS[(level - 1) % LEVEL_COLORS.length]!;
 }
 
 /** Horizontal distance covered during one full jump at the given speed. */

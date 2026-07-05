@@ -59,7 +59,17 @@ games/cube-dash    Game #5, browser-playable. Geometry-Dash-style auto-runner
                    src/logic/runner.ts (tested) — jump/gravity, block-top
                    landing vs side-hit death, inset spike hitboxes, pattern
                    spawner with speed-gated patterns (spike3 needs ≥540 px/s)
-                   and clearability invariants tested; tap/space/up to jump,
+                   and clearability invariants tested. Level system (GD-style
+                   discrete levels): select in menu (◀ ▶), each level is a
+                   fixed run (600m + 150m/level, cap 1500m) ending at a
+                   checkered finish line; clearing unlocks the next. Layouts
+                   are SEEDED per level (levelSeed = n*7919) so every attempt
+                   is identical/memorizable. Speed +40/level (base 420 cap
+                   600 → spike3 from level 4), gaps ×levelGapScale (1.2→0.75,
+                   clearability tested levels 1-25), no spawns in last 1200px
+                   runway. HUD: % progress + top progress bar. Storage keys:
+                   "unlockedLevel", "lastPlayed", "bestPct:<n>" ("highScore"/
+                   "bestLevel" are legacy, unused). tap/space/up to jump,
                    jump buffering (110ms), score = meters; rewarded revive
                    clears 900px ahead + 1.2s invuln. Visual pass: all textures
                    generated at runtime via Graphics.generateTexture (gradient
@@ -87,7 +97,7 @@ npm run dev:2048   # merge-2048 on Vite dev server
 npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
-npm test           # vitest (15 + 12 + 9 + 8 + 20 = 64 tests, all green)
+npm test           # vitest (15 + 12 + 9 + 8 + 25 = 69 tests, all green)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)
 ```

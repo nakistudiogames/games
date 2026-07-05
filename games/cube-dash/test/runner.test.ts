@@ -12,11 +12,16 @@ import {
   collectsPowerUp,
   jump,
   jumpDistancePx,
+  LEVEL_COLORS,
+  levelColor,
+  levelGapScale,
+  levelLengthM,
+  levelSeed,
+  levelSpeed,
   makePowerUp,
   minGapPx,
   pickPattern,
   powerUpGapPx,
-  speedForDistance,
   stepRunner,
   supportAt,
   tryJump,
@@ -165,12 +170,52 @@ describe("death detection", () => {
   });
 });
 
-describe("difficulty and patterns", () => {
-  it("speed ramps with distance and caps", () => {
-    expect(speedForDistance(0)).toBe(BASE_SPEED);
-    expect(speedForDistance(1200)).toBe(520);
-    expect(speedForDistance(100000)).toBe(MAX_SPEED);
+describe("level system", () => {
+  it("levels get longer up to a cap", () => {
+    expect(levelLengthM(1)).toBe(600);
+    expect(levelLengthM(2)).toBe(750);
+    expect(levelLengthM(3)).toBeGreaterThan(levelLengthM(2));
+    expect(levelLengthM(50)).toBe(1500);
   });
+
+  it("level layouts are deterministic: same seed, same pattern sequence", () => {
+    expect(levelSeed(3)).not.toBe(levelSeed(4));
+    const a = new Rng(levelSeed(3));
+    const b = new Rng(levelSeed(3));
+    const idsA = Array.from({ length: 20 }, () => pickPattern(a, 500).id);
+    const idsB = Array.from({ length: 20 }, () => pickPattern(b, 500).id);
+    expect(idsA).toEqual(idsB);
+  });
+
+  it("speed steps up per level and caps", () => {
+    expect(levelSpeed(1)).toBe(BASE_SPEED);
+    expect(levelSpeed(2)).toBe(BASE_SPEED + 40);
+    expect(levelSpeed(4)).toBe(540); // unlocks triple spikes
+    expect(levelSpeed(50)).toBe(MAX_SPEED);
+  });
+
+  it("pattern gaps tighten per level but never below the floor", () => {
+    expect(levelGapScale(1)).toBeCloseTo(1.2);
+    expect(levelGapScale(2)).toBeGreaterThan(levelGapScale(3));
+    expect(levelGapScale(30)).toBe(0.75);
+  });
+
+  it("every level stays clearable: scaled gap still fits a reaction + jump", () => {
+    for (let level = 1; level <= 25; level++) {
+      const speed = levelSpeed(level);
+      const gap = minGapPx(speed) * levelGapScale(level);
+      expect(gap).toBeGreaterThan(jumpDistancePx(speed) + 0.2 * speed);
+    }
+  });
+
+  it("cycles theme colors", () => {
+    expect(levelColor(1)).toBe(LEVEL_COLORS[0]);
+    expect(levelColor(7)).toBe(LEVEL_COLORS[0]);
+    expect(levelColor(8)).toBe(LEVEL_COLORS[1]);
+  });
+});
+
+describe("difficulty and patterns", () => {
 
   it("every spike-only pattern is clearable at its unlock speed", () => {
     for (const p of PATTERNS) {
