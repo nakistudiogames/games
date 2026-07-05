@@ -65,8 +65,16 @@ games/cube-dash    Game #5, browser-playable. Geometry-Dash-style auto-runner
                    platform tops ≤ 190 (single-jump reach, tested). Layered
                    patterns by level: stairs L2, tunnel/airMine L3, skyway L4,
                    mineCombo L5; air mines render as inverted spikes.
-                   Background gains a 2nd skyline layer at L3 (foreground
-                   speed streaks were tried and removed per user). Level system (GD-style
+                   Background gains a 2nd silhouette layer from the 3rd level
+                   of each world (foreground speed streaks were tried and
+                   removed per user). WORLDS (src/worlds.ts, tested): every 5
+                   levels share a theme — sky/haze/silhouette/ground palette +
+                   its own MusicPattern — Neon City (132bpm) / Crystal Caves
+                   (112bpm) / Magma Core (145bpm), cycling; textures generated
+                   per world (sil-<id>, ground-<id>); music.ts caches one
+                   MusicPlayer per world (musicForLevel/stopAllMusic). HUD
+                   run timer next to the % (elapsed active-play time, shown
+                   on the complete screen too). Level system (GD-style
                    discrete levels): select in menu (◀ ▶), each level is a
                    fixed run (600m + 150m/level, cap 1500m) ending at a
                    checkered finish line; clearing unlocks the next. Layouts
@@ -115,7 +123,7 @@ npm run dev:2048   # merge-2048 on Vite dev server
 npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
-npm test           # vitest (15 + 12 + 9 + 8 + 34 = 78 tests, all green)
+npm test           # vitest (15 + 12 + 9 + 8 + 37 = 81 tests, all green)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)
 ```

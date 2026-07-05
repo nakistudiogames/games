@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { Rng, sfx } from "@mg/core";
+import type { MusicPlayer } from "@mg/core";
 import { floatBanner, textButton } from "@mg/ui";
 import {
   GROUND_Y,
@@ -26,7 +27,9 @@ import type { Obstacle, PowerUp, Runner } from "../logic/runner";
 import { adsReady } from "../ads";
 import { characterById } from "../characters";
 import { attachAura, buildCharacterParts } from "../characterView";
-import { music } from "../music";
+import { musicForLevel, stopAllMusic } from "../music";
+import { worldForLevel } from "../worlds";
+import type { WorldTheme } from "../worlds";
 import { storage } from "./MenuScene";
 
 const WORLD_WIDTH = 720;
@@ -56,6 +59,8 @@ type Phase = "ready" | "playing" | "dead" | "complete";
 export class GameScene extends Phaser.Scene {
   private levelNum = 1;
   private levelLengthPx = 0;
+  private world!: WorldTheme;
+  private bgm!: MusicPlayer;
   private runner!: Runner;
   private playerView!: Phaser.GameObjects.Container;
   private playerShadow!: Phaser.GameObjects.Image;
@@ -97,6 +102,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.world = worldForLevel(this.levelNum);
+    this.bgm = musicForLevel(this.levelNum);
     this.levelLengthPx = levelLengthM(this.levelNum) * 10;
     this.runner = { y: GROUND_Y, vy: 0, grounded: true, airJumpUsed: false };
     this.obstacles = [];
@@ -160,18 +167,43 @@ export class GameScene extends Phaser.Scene {
       g.generateTexture("stars", 160, 160);
       g.destroy();
     }
-    if (!this.textures.exists("skyline")) {
+    // World-specific silhouette (city buildings / crystal shards / rocks).
+    const silKey = `sil-${this.world.id}`;
+    if (!this.textures.exists(silKey)) {
       const g = this.make.graphics({ x: 0, y: 0 }, false);
-      const buildings: Array<[number, number, number]> = [
-        [0, 70, 190], [80, 60, 260], [150, 90, 140], [250, 70, 300], [330, 55, 210],
-      ];
-      for (const [x, w, h] of buildings) {
-        g.fillStyle(0x181f38, 1);
-        g.fillRect(x, 320 - h, w, h);
-        g.fillStyle(0x232c4e, 1);
-        g.fillRect(x, 320 - h, w, 6);
+      if (this.world.silhouette === "city") {
+        const buildings: Array<[number, number, number]> = [
+          [0, 70, 190], [80, 60, 260], [150, 90, 140], [250, 70, 300], [330, 55, 210],
+        ];
+        for (const [x, w, h] of buildings) {
+          g.fillStyle(this.world.silDark, 1);
+          g.fillRect(x, 320 - h, w, h);
+          g.fillStyle(this.world.silLight, 1);
+          g.fillRect(x, 320 - h, w, 6);
+        }
+      } else if (this.world.silhouette === "crystals") {
+        const shards: Array<[number, number, number]> = [
+          [0, 70, 220], [50, 50, 300], [110, 80, 170], [180, 55, 260], [240, 90, 200],
+          [310, 60, 310], [360, 50, 150],
+        ];
+        for (const [x, w, h] of shards) {
+          g.fillStyle(this.world.silDark, 1);
+          g.fillTriangle(x, 320, x + w / 2, 320 - h, x + w, 320);
+          g.fillStyle(this.world.silLight, 0.8);
+          g.fillTriangle(x + w / 2, 320 - h, x + w / 2 + 8, 320 - h + 40, x + w / 2 - 8, 320 - h + 40);
+        }
+      } else {
+        const rocks: Array<[number, number, number]> = [
+          [0, 160, 140], [100, 190, 210], [240, 170, 160], [320, 160, 120],
+        ];
+        for (const [x, w, h] of rocks) {
+          g.fillStyle(this.world.silDark, 1);
+          g.fillTriangle(x, 320, x + w * 0.45, 320 - h, x + w, 320);
+          g.fillStyle(this.world.silLight, 0.55);
+          g.fillTriangle(x + w * 0.45, 320 - h, x + w * 0.62, 320 - h * 0.55, x + w * 0.3, 320 - h * 0.55);
+        }
       }
-      g.generateTexture("skyline", 400, 320);
+      g.generateTexture(silKey, 400, 320);
       g.destroy();
     }
     if (!this.textures.exists("shadowtex")) {
@@ -186,15 +218,16 @@ export class GameScene extends Phaser.Scene {
       g.generateTexture("shadowtex", 96, 28);
       g.destroy();
     }
-    if (!this.textures.exists("groundgrid")) {
+    const groundKey = `ground-${this.world.id}`;
+    if (!this.textures.exists(groundKey)) {
       const g = this.make.graphics({ x: 0, y: 0 }, false);
-      g.fillStyle(0x10142a, 1);
+      g.fillStyle(this.world.groundBase, 1);
       g.fillRect(0, 0, 80, 280);
-      g.fillStyle(0x1c2547, 1);
+      g.fillStyle(this.world.groundGrid, 1);
       g.fillRect(0, 0, 2, 280); // vertical grid line
       g.fillRect(0, 56, 80, 1); // faint horizontals
       g.fillRect(0, 140, 80, 1);
-      g.generateTexture("groundgrid", 80, 280);
+      g.generateTexture(groundKey, 80, 280);
       g.destroy();
     }
   }
@@ -203,24 +236,26 @@ export class GameScene extends Phaser.Scene {
     const accent = levelColor(this.levelNum);
 
     const sky = this.add.graphics().setDepth(0);
-    sky.fillGradientStyle(0x0b0e24, 0x0b0e24, 0x2a1650, 0x1a1240, 1);
+    sky.fillGradientStyle(this.world.skyTop, this.world.skyTop, this.world.skyBottomA, this.world.skyBottomB, 1);
     sky.fillRect(0, 0, WORLD_WIDTH, GROUND_Y);
 
+    const silKey = `sil-${this.world.id}`;
     this.bgFar = this.add
       .tileSprite(0, 0, WORLD_WIDTH, GROUND_Y, "stars")
       .setOrigin(0)
       .setDepth(1)
       .setAlpha(0.7);
     this.bgMid = this.add
-      .tileSprite(0, GROUND_Y - 320, WORLD_WIDTH, 320, "skyline")
+      .tileSprite(0, GROUND_Y - 320, WORLD_WIDTH, 320, silKey)
       .setOrigin(0)
       .setDepth(2)
-      .setAlpha(0.55); // atmospheric haze pushes the skyline into the distance
+      .setAlpha(0.55); // atmospheric haze pushes the silhouette into the distance
     // Extra depth layer appears as the levels progress.
     this.bgMid2 = null;
-    if (this.levelNum >= 3) {
+    if ((this.levelNum - 1) % 5 >= 2) {
+      // Third level of each world onward gains a second, more distant layer.
       this.bgMid2 = this.add
-        .tileSprite(0, GROUND_Y - 545, WORLD_WIDTH, 224, "skyline")
+        .tileSprite(0, GROUND_Y - 545, WORLD_WIDTH, 224, silKey)
         .setOrigin(0)
         .setDepth(1)
         .setAlpha(0.3);
@@ -228,11 +263,11 @@ export class GameScene extends Phaser.Scene {
     }
 
     const haze = this.add.graphics().setDepth(3);
-    haze.fillGradientStyle(0x2a1650, 0x2a1650, 0x2a1650, 0x2a1650, 0, 0, 0.35, 0.35);
+    haze.fillGradientStyle(this.world.haze, this.world.haze, this.world.haze, this.world.haze, 0, 0, 0.35, 0.35);
     haze.fillRect(0, GROUND_Y - 320, WORLD_WIDTH, 320);
 
     this.groundTile = this.add
-      .tileSprite(0, GROUND_Y, WORLD_WIDTH, WORLD_HEIGHT - GROUND_Y, "groundgrid")
+      .tileSprite(0, GROUND_Y, WORLD_WIDTH, WORLD_HEIGHT - GROUND_Y, `ground-${this.world.id}`)
       .setOrigin(0)
       .setDepth(4);
     // Ground falls away into darkness — reads as depth below the track.
@@ -370,12 +405,12 @@ export class GameScene extends Phaser.Scene {
       const nowMuted = !storage.get("musicMuted", false);
       storage.set("musicMuted", nowMuted);
       this.muteButton.setText(nowMuted ? "🔇" : "🔊");
-      if (nowMuted) music.stop();
-      else if (this.phase === "playing") music.start();
+      if (nowMuted) stopAllMusic();
+      else if (this.phase === "playing") this.bgm.start();
     });
 
     this.readyText = this.add
-      .text(WORLD_WIDTH / 2, 700, `LEVEL ${this.levelNum}\nTAP TO START`, {
+      .text(WORLD_WIDTH / 2, 700, `${this.world.name}\nLEVEL ${this.levelNum}\nTAP TO START`, {
         fontFamily: "Arial, sans-serif",
         fontSize: "52px",
         color: "#a5d6a7",
@@ -398,7 +433,7 @@ export class GameScene extends Phaser.Scene {
       this.readyText?.destroy();
       this.readyText = null;
       this.trail.emitting = true;
-      if (!storage.get("musicMuted", false)) music.start();
+      if (!storage.get("musicMuted", false)) this.bgm.start();
       return;
     }
     if (this.phase !== "playing") return;
@@ -674,7 +709,7 @@ export class GameScene extends Phaser.Scene {
     const unlocked = storage.get("unlockedLevel", 1);
     if (this.levelNum + 1 > unlocked) storage.set("unlockedLevel", this.levelNum + 1);
     sfx.clear(4);
-    music.stop();
+    stopAllMusic();
     this.sparkle.explode(30, this.playerView.x, this.playerView.y);
     void adsReady.then((ads) => ads.maybeShowInterstitial());
 
@@ -745,7 +780,7 @@ export class GameScene extends Phaser.Scene {
     this.aura.setVisible(false);
     this.powerBadge.setText("");
     sfx.gameOver();
-    music.stop();
+    stopAllMusic();
     this.cameras.main.shake(200, 0.01);
     const pct = this.progressPct();
     const best = this.bumpBestPct(pct);
@@ -841,6 +876,6 @@ export class GameScene extends Phaser.Scene {
     this.trail.emitting = true;
     this.invulnMs = REVIVE_INVULN_MS;
     this.phase = "playing";
-    if (!storage.get("musicMuted", false)) music.start();
+    if (!storage.get("musicMuted", false)) this.bgm.start();
   }
 }

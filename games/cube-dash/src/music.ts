@@ -1,22 +1,20 @@
 import { MusicPlayer } from "@mg/core";
+import { worldForLevel } from "./worlds";
 
-// Note frequencies (Hz)
-const A2 = 110.0;
-const C3 = 130.81;
-const E2 = 82.41;
-const G2 = 98.0;
-const A4 = 440.0;
-const C5 = 523.25;
-const E5 = 659.25;
-const G4 = 392.0;
-const A5 = 880.0;
+/** One lazily created player per world so each 5-level block has its track. */
+const players = new Map<string, MusicPlayer>();
 
-/** Driving A-minor loop in the Geometry Dash electro style, 132 BPM. */
-export const music = new MusicPlayer({
-  bpm: 132,
-  //     1     .     2     .     3     .     4     .
-  bass: [A2, null, A2, null, C3, null, C3, null, G2, null, G2, null, E2, null, E2, C3],
-  lead: [A4, null, C5, null, E5, null, A5, null, G4, null, C5, null, E5, null, C5, A4],
-  kick: [true, false, false, false, true, false, false, false, true, false, false, false, true, false, false, false],
-  hat: [false, false, true, false, false, false, true, false, false, false, true, false, false, false, true, true],
-});
+export function musicForLevel(level: number): MusicPlayer {
+  const world = worldForLevel(level);
+  let player = players.get(world.id);
+  if (!player) {
+    player = new MusicPlayer(world.music);
+    players.set(world.id, player);
+  }
+  return player;
+}
+
+/** Stops whichever world's track is currently playing. */
+export function stopAllMusic(): void {
+  for (const player of players.values()) player.stop();
+}
