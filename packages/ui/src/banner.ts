@@ -20,6 +20,7 @@ export function floatBanner(
     .setOrigin(0.5)
     .setScale(0.3)
     .setDepth(50);
+  banner.setShadow(0, 8, "#000000", 10, false, true);
   scene.tweens.add({
     targets: banner,
     scale: 1,

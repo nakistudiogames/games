@@ -5,15 +5,20 @@ import {
   GROUND_Y,
   PLAYER_SIZE,
   PLAYER_X,
+  POWER_UPS,
   checkDeath,
+  collectsPowerUp,
   jump,
+  makePowerUp,
   minGapPx,
   pickPattern,
+  powerUpGapPx,
   speedForDistance,
   stepRunner,
   supportAt,
+  tryJump,
 } from "../logic/runner";
-import type { Obstacle, Runner } from "../logic/runner";
+import type { Obstacle, PowerUp, Runner } from "../logic/runner";
 import { adsReady } from "../ads";
 import { music } from "../music";
 import { storage } from "./MenuScene";
@@ -32,11 +37,20 @@ interface ObstacleView {
   view: Phaser.GameObjects.Container;
 }
 
+interface PowerUpView {
+  p: PowerUp;
+  view: Phaser.GameObjects.Container;
+}
+
+/** Distance until the first pickup — early, so players learn the mechanic. */
+const FIRST_POWERUP_PX = 1500;
+
 type Phase = "ready" | "playing" | "dead";
 
 export class GameScene extends Phaser.Scene {
   private runner!: Runner;
   private playerView!: Phaser.GameObjects.Container;
+  private playerShadow!: Phaser.GameObjects.Image;
   private trail!: Phaser.GameObjects.Particles.ParticleEmitter;
   private dust!: Phaser.GameObjects.Particles.ParticleEmitter;
   private burst!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -44,6 +58,12 @@ export class GameScene extends Phaser.Scene {
   private bgMid!: Phaser.GameObjects.TileSprite;
   private groundTile!: Phaser.GameObjects.TileSprite;
   private obstacles: ObstacleView[] = [];
+  private powerUps: PowerUpView[] = [];
+  private aura!: Phaser.GameObjects.Rectangle;
+  private sparkle!: Phaser.GameObjects.Particles.ParticleEmitter;
+  private powerBadge!: Phaser.GameObjects.Text;
+  private doubleJumpMs = 0;
+  private nextPowerUpAt = FIRST_POWERUP_PX;
   private rng!: Rng;
   private phase: Phase = "ready";
   private distancePx = 0;
@@ -60,8 +80,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.runner = { y: GROUND_Y, vy: 0, grounded: true };
+    this.runner = { y: GROUND_Y, vy: 0, grounded: true, airJumpUsed: false };
     this.obstacles = [];
+    this.powerUps = [];
+    this.doubleJumpMs = 0;
+    this.nextPowerUpAt = FIRST_POWERUP_PX;
     this.rng = new Rng();
     this.phase = "ready";
     this.distancePx = 0;
@@ -120,6 +143,18 @@ export class GameScene extends Phaser.Scene {
       g.generateTexture("skyline", 400, 320);
       g.destroy();
     }
+    if (!this.textures.exists("shadowtex")) {
+      const g = this.make.graphics({ x: 0, y: 0 }, false);
+      // Layered ellipses approximate a soft radial shadow.
+      g.fillStyle(0x000000, 0.1);
+      g.fillEllipse(48, 14, 96, 28);
+      g.fillStyle(0x000000, 0.14);
+      g.fillEllipse(48, 14, 74, 21);
+      g.fillStyle(0x000000, 0.2);
+      g.fillEllipse(48, 14, 50, 14);
+      g.generateTexture("shadowtex", 96, 28);
+      g.destroy();
+    }
     if (!this.textures.exists("groundgrid")) {
       const g = this.make.graphics({ x: 0, y: 0 }, false);
       g.fillStyle(0x10142a, 1);
@@ -147,12 +182,19 @@ export class GameScene extends Phaser.Scene {
       .tileSprite(0, GROUND_Y - 320, WORLD_WIDTH, 320, "skyline")
       .setOrigin(0)
       .setDepth(2)
-      .setAlpha(0.9);
+      .setAlpha(0.55); // atmospheric haze pushes the skyline into the distance
+    const haze = this.add.graphics().setDepth(3);
+    haze.fillGradientStyle(0x2a1650, 0x2a1650, 0x2a1650, 0x2a1650, 0, 0, 0.35, 0.35);
+    haze.fillRect(0, GROUND_Y - 320, WORLD_WIDTH, 320);
 
     this.groundTile = this.add
       .tileSprite(0, GROUND_Y, WORLD_WIDTH, WORLD_HEIGHT - GROUND_Y, "groundgrid")
       .setOrigin(0)
       .setDepth(4);
+    // Ground falls away into darkness — reads as depth below the track.
+    const groundFade = this.add.graphics().setDepth(4);
+    groundFade.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0, 0, 0.65, 0.65);
+    groundFade.fillRect(0, GROUND_Y, WORLD_WIDTH, WORLD_HEIGHT - GROUND_Y);
     // Neon edge on the ground plus a soft glow above it.
     this.add.rectangle(0, GROUND_Y - 10, WORLD_WIDTH, 10, 0x26c6da, 0.12).setOrigin(0).setDepth(5);
     this.add.rectangle(0, GROUND_Y - 3, WORLD_WIDTH, 5, 0x4dd0e1).setOrigin(0).setDepth(5);
@@ -160,14 +202,26 @@ export class GameScene extends Phaser.Scene {
 
   private buildPlayer(): void {
     const s = PLAYER_SIZE;
+    this.aura = this.add.rectangle(0, 0, s + 18, s + 18, 0xffd54f, 0.28).setVisible(false);
     const body = this.add.rectangle(0, 0, s, s, PLAYER_COLOR).setStrokeStyle(5, 0x0a2a30);
-    const face = this.add.rectangle(0, 0, s - 22, s - 22, 0x63e5f5);
+    // Bevel: lit top/left edges, shaded bottom/right — light from the top-left.
+    const litTop = this.add.rectangle(0, -s / 2 + 7, s - 12, 5, 0x9ef3fc);
+    const litLeft = this.add.rectangle(-s / 2 + 7, 0, 5, s - 12, 0x9ef3fc);
+    const shadeBottom = this.add.rectangle(0, s / 2 - 7, s - 12, 5, 0x0d7d8f);
+    const shadeRight = this.add.rectangle(s / 2 - 7, 0, 5, s - 12, 0x0d7d8f);
+    const face = this.add.rectangle(0, 0, s - 26, s - 26, 0x63e5f5);
     const eyeL = this.add.rectangle(-9, -6, 9, 14, 0x0a2a30);
     const eyeR = this.add.rectangle(11, -6, 9, 14, 0x0a2a30);
     const mouth = this.add.rectangle(1, 12, 22, 6, 0x0a2a30);
     this.playerView = this.add
-      .container(PLAYER_X + s / 2, GROUND_Y - s / 2, [body, face, eyeL, eyeR, mouth])
+      .container(PLAYER_X + s / 2, GROUND_Y - s / 2, [
+        this.aura, body, litTop, litLeft, shadeBottom, shadeRight, face, eyeL, eyeR, mouth,
+      ])
       .setDepth(10);
+
+    this.playerShadow = this.add
+      .image(PLAYER_X + s / 2, GROUND_Y + 9, "shadowtex")
+      .setDepth(6);
 
     this.trail = this.add.particles(0, 0, "dot", {
       follow: this.playerView,
@@ -193,6 +247,16 @@ export class GameScene extends Phaser.Scene {
     });
     this.dust.setDepth(9);
 
+    this.sparkle = this.add.particles(0, 0, "dot", {
+      speed: { min: 80, max: 260 },
+      lifespan: 450,
+      scale: { start: 1.2, end: 0 },
+      alpha: { start: 1, end: 0 },
+      tint: [0xffd54f, 0xfff59d, 0xffffff],
+      emitting: false,
+    });
+    this.sparkle.setDepth(12);
+
     this.burst = this.add.particles(0, 0, "dot", {
       speed: { min: 120, max: 420 },
       lifespan: 600,
@@ -214,6 +278,17 @@ export class GameScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
       .setDepth(20);
+    this.scoreText.setShadow(0, 6, "#000000", 8, false, true);
+
+    this.powerBadge = this.add
+      .text(40, 70, "", {
+        fontFamily: "Arial Black, sans-serif",
+        fontSize: "38px",
+        color: "#ffd54f",
+      })
+      .setOrigin(0, 0.5)
+      .setDepth(20);
+    this.powerBadge.setShadow(0, 5, "#000000", 6, false, true);
 
     const muted = storage.get("musicMuted", false);
     this.muteButton = this.add
@@ -256,9 +331,12 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (this.phase !== "playing") return;
-    if (this.runner.grounded) {
-      jump(this.runner);
+    const kind = tryJump(this.runner, this.doubleJumpMs > 0);
+    if (kind === "ground") {
       sfx.place();
+    } else if (kind === "air") {
+      sfx.clear(1);
+      this.sparkle.explode(10, this.playerView.x, this.playerView.y + PLAYER_SIZE / 2);
     } else {
       this.jumpBufferMs = JUMP_BUFFER_MS;
     }
@@ -283,6 +361,7 @@ export class GameScene extends Phaser.Scene {
       this.obstacles.shift()!.view.destroy();
     }
     this.maybeSpawnPattern(speed);
+    this.updatePowerUps(speed, dt, deltaMs);
 
     const obsList = this.obstacles.map((o) => o.obs);
     const wasAirborne = !this.runner.grounded;
@@ -298,6 +377,11 @@ export class GameScene extends Phaser.Scene {
     this.jumpBufferMs = Math.max(0, this.jumpBufferMs - deltaMs);
     if (!this.runner.grounded) this.playerView.rotation += 6 * dt;
     this.playerView.y = this.runner.y - PLAYER_SIZE / 2;
+
+    // Ground shadow shrinks and fades as the cube gains height.
+    const airHeight = GROUND_Y - this.runner.y;
+    const shadowF = Math.max(0.25, 1 - airHeight / 500);
+    this.playerShadow.setScale(1.25 * shadowF, shadowF).setAlpha(0.35 + 0.45 * shadowF);
 
     const meters = Math.floor(this.distancePx / 10);
     this.scoreText.setText(`${meters}m`);
@@ -316,6 +400,84 @@ export class GameScene extends Phaser.Scene {
     if (checkDeath(this.runner.y, obsList)) this.die();
   }
 
+  private updatePowerUps(speed: number, dt: number, deltaMs: number): void {
+    for (const { p, view } of this.powerUps) {
+      p.x -= speed * dt;
+      view.x = p.x;
+    }
+    this.powerUps = this.powerUps.filter(({ p, view }) => {
+      if (p.x < -80) {
+        view.destroy();
+        return false;
+      }
+      if (collectsPowerUp(this.runner.y, p)) {
+        this.collectPowerUp(p);
+        view.destroy();
+        return false;
+      }
+      return true;
+    });
+
+    // Spawn the next pickup once due, in a spot clear of obstacles.
+    if (this.distancePx >= this.nextPowerUpAt) {
+      const x = WORLD_WIDTH + 60;
+      const blocked = this.obstacles.some(
+        ({ obs }) => obs.x < x + 160 && obs.x + obs.w > x - 160,
+      );
+      if (!blocked) {
+        const p = makePowerUp(this.rng, x);
+        this.powerUps.push({ p, view: this.buildPowerUpView(p) });
+        this.nextPowerUpAt = this.distancePx + powerUpGapPx(this.rng);
+      }
+    }
+
+    // Tick down the active effect.
+    if (this.doubleJumpMs > 0) {
+      this.doubleJumpMs = Math.max(0, this.doubleJumpMs - deltaMs);
+      this.powerBadge.setText(`⇈ ${Math.ceil(this.doubleJumpMs / 1000)}s`);
+      this.aura.setVisible(true);
+      this.aura.setAlpha(0.2 + 0.12 * Math.sin(this.time.now / 110));
+      if (this.doubleJumpMs === 0) {
+        this.powerBadge.setText("");
+        this.aura.setVisible(false);
+      }
+    }
+  }
+
+  private collectPowerUp(p: PowerUp): void {
+    const spec = POWER_UPS[p.kind];
+    this.doubleJumpMs = spec.durationMs;
+    sfx.clear(2);
+    this.sparkle.explode(16, PLAYER_X + PLAYER_SIZE / 2, p.y);
+    floatBanner(this, `${spec.label}!`, 520, "60px", "#ffd54f");
+  }
+
+  private buildPowerUpView(p: PowerUp): Phaser.GameObjects.Container {
+    const spec = POWER_UPS[p.kind];
+    const container = this.add.container(p.x, p.y).setDepth(9);
+    const diamond = this.add.rectangle(0, 0, 40, 40, spec.color).setStrokeStyle(4, 0xffffff, 0.9);
+    diamond.setAngle(45);
+    const glyph = this.add
+      .text(0, 0, "⇈", {
+        fontFamily: "Arial Black, sans-serif",
+        fontSize: "26px",
+        color: "#12141c",
+      })
+      .setOrigin(0.5);
+    container.add([diamond, glyph]);
+    this.tweens.add({ targets: diamond, angle: 405, duration: 1800, repeat: -1 });
+    // Visual bob only — the logic-side pickup box stays at p.y.
+    this.tweens.add({
+      targets: container,
+      y: p.y - 12,
+      duration: 700,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut",
+    });
+    return container;
+  }
+
   private maybeSpawnPattern(speed: number): void {
     const last = this.obstacles[this.obstacles.length - 1];
     const lastEnd = last ? last.obs.x + last.obs.w : -Infinity;
@@ -331,19 +493,44 @@ export class GameScene extends Phaser.Scene {
   private buildObstacleView(obs: Obstacle): Phaser.GameObjects.Container {
     const top = GROUND_Y - obs.h;
     const container = this.add.container(obs.x, top).setDepth(8);
+    const { w, h } = obs;
+
+    const shadow = this.add
+      .image(w / 2 + 8, h + 7, "shadowtex")
+      .setScale((w + 36) / 96, 0.8)
+      .setAlpha(0.55);
+    container.add(shadow);
+
+    const g = this.add.graphics();
     if (obs.kind === "spike") {
-      const spike = this.add
-        .triangle(obs.w / 2, obs.h / 2, 0, obs.h, obs.w / 2, 0, obs.w, obs.h, 0xd32f2f)
-        .setStrokeStyle(3, 0xff8a80);
-      container.add(spike);
+      // Two-tone faces: lit left, shaded right — same light as the cube bevel.
+      g.fillStyle(0xef5350);
+      g.fillPoints([{ x: 0, y: h }, { x: w / 2, y: 0 }, { x: w / 2, y: h }], true);
+      g.fillStyle(0x8e2320);
+      g.fillPoints([{ x: w / 2, y: 0 }, { x: w, y: h }, { x: w / 2, y: h }], true);
+      g.lineStyle(3, 0xff8a80, 0.9);
+      g.strokePoints([{ x: 0, y: h }, { x: w / 2, y: 0 }, { x: w, y: h }], false);
     } else {
-      const body = this.add
-        .rectangle(0, 0, obs.w, obs.h, 0x3949ab)
-        .setOrigin(0)
-        .setStrokeStyle(3, 0x7986cb);
-      const bevel = this.add.rectangle(3, 3, obs.w - 6, 8, 0x9fa8da).setOrigin(0);
-      container.add([body, bevel]);
+      // 2.5D box: shaded right face and lit top face extruded up-right.
+      const d = 14;
+      g.fillStyle(0x252e6e);
+      g.fillPoints(
+        [{ x: w, y: 0 }, { x: w + d, y: -d }, { x: w + d, y: h - d }, { x: w, y: h }],
+        true,
+      );
+      g.fillStyle(0x8d97dd);
+      g.fillPoints(
+        [{ x: 0, y: 0 }, { x: d, y: -d }, { x: w + d, y: -d }, { x: w, y: 0 }],
+        true,
+      );
+      g.fillStyle(0x3949ab);
+      g.fillRect(0, 0, w, h);
+      g.fillStyle(0x5262c4);
+      g.fillRect(0, 0, w, 7);
+      g.lineStyle(2, 0x171d45, 1);
+      g.strokeRect(0, 0, w, h);
     }
+    container.add(g);
     return container;
   }
 
@@ -352,6 +539,9 @@ export class GameScene extends Phaser.Scene {
     this.trail.emitting = false;
     this.burst.explode(28, this.playerView.x, this.playerView.y);
     this.playerView.setVisible(false);
+    this.playerShadow.setVisible(false);
+    this.aura.setVisible(false);
+    this.powerBadge.setText("");
     sfx.gameOver();
     music.stop();
     this.cameras.main.shake(200, 0.01);
@@ -435,6 +625,7 @@ export class GameScene extends Phaser.Scene {
     this.runner.grounded = true;
     this.playerView.rotation = 0;
     this.playerView.setVisible(true);
+    this.playerShadow.setVisible(true);
     this.trail.emitting = true;
     this.invulnMs = REVIVE_INVULN_MS;
     this.phase = "playing";

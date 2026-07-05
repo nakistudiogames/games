@@ -20,7 +20,8 @@ export class MenuScene extends Phaser.Scene {
         stroke: "#26c6da",
         strokeThickness: 10,
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setShadow(0, 10, "#000000", 12, false, true);
 
     const best = storage.get("highScore", 0);
     if (best > 0) {

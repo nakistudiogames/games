@@ -20,6 +20,8 @@ export interface Runner {
   y: number;
   vy: number;
   grounded: boolean;
+  /** The one air jump (double-jump power-up) has been spent this airtime. */
+  airJumpUsed: boolean;
 }
 
 export type ObstacleKind = "spike" | "block";
@@ -42,10 +44,27 @@ export function jumpDistancePx(speed: number): number {
   return speed * JUMP_AIRTIME_SEC;
 }
 
+/**
+ * Attempts a jump. Grounded jumps always work; one extra air jump is allowed
+ * while the double-jump power-up is active. Returns what kind of jump
+ * happened (null = nothing).
+ */
+export function tryJump(r: Runner, allowAirJump: boolean): "ground" | "air" | null {
+  if (r.grounded) {
+    r.vy = JUMP_VELOCITY;
+    r.grounded = false;
+    return "ground";
+  }
+  if (allowAirJump && !r.airJumpUsed) {
+    r.vy = JUMP_VELOCITY;
+    r.airJumpUsed = true;
+    return "air";
+  }
+  return null;
+}
+
 export function jump(r: Runner): void {
-  if (!r.grounded) return;
-  r.vy = JUMP_VELOCITY;
-  r.grounded = false;
+  tryJump(r, false);
 }
 
 /**
@@ -77,6 +96,7 @@ export function stepRunner(r: Runner, dtSec: number, support: number): void {
     r.y = support;
     r.vy = 0;
     r.grounded = true;
+    r.airJumpUsed = false;
   } else {
     r.y = newY;
   }
@@ -154,4 +174,52 @@ export function pickPattern(rng: Rng, speed: number): Pattern {
 /** Breathing room between patterns: reaction time plus one full jump. */
 export function minGapPx(speed: number): number {
   return 0.5 * speed + jumpDistancePx(speed);
+}
+
+// ---------------------------------------------------------------------------
+// Power-ups: temporary timed abilities collected as floating pickups.
+
+export type PowerUpKind = "doubleJump";
+
+export interface PowerUpSpec {
+  durationMs: number;
+  label: string;
+  color: number;
+}
+
+export const POWER_UPS: Record<PowerUpKind, PowerUpSpec> = {
+  doubleJump: { durationMs: 10_000, label: "DOUBLE JUMP", color: 0xffd54f },
+};
+
+export const POWERUP_SIZE = 56;
+
+export interface PowerUp {
+  /** Center of the pickup, in world pixels. */
+  x: number;
+  y: number;
+  kind: PowerUpKind;
+}
+
+/** Pickups float within single-jump reach (apex ≈ 200px above ground). */
+export function makePowerUp(rng: Rng, x: number): PowerUp {
+  return {
+    x,
+    y: GROUND_Y - 90 - rng.next() * 90,
+    kind: "doubleJump",
+  };
+}
+
+/** World-pixel gap between pickup spawns. */
+export function powerUpGapPx(rng: Rng): number {
+  return 2400 + rng.next() * 1600;
+}
+
+export function collectsPowerUp(bottomY: number, p: PowerUp): boolean {
+  const half = POWERUP_SIZE / 2;
+  return (
+    PLAYER_X + PLAYER_SIZE > p.x - half &&
+    PLAYER_X < p.x + half &&
+    bottomY > p.y - half &&
+    bottomY - PLAYER_SIZE < p.y + half
+  );
 }

@@ -20,6 +20,7 @@ export function textButton(
     })
     .setOrigin(0.5)
     .setInteractive({ useHandCursor: true });
+  btn.setShadow(0, 6, "#000000", 8, false, true);
   btn.on("pointerdown", onClick);
   return btn;
 }

@@ -34,7 +34,8 @@ packages/ads    @mg/ads  — AdsService interface; NoopAds on web, AdmobAds on n
                            cooldown default 90s, rewarded via event listeners —
                            NOT yet validated on a real device)
 packages/ui     @mg/ui   — Phaser helpers: floatBanner (celebration text),
-                           textButton (padded text button)
+                           textButton (padded text button); both cast drop
+                           shadows (setShadow) for a subtle 3D depth cue
 games/block-blast  Pilot game, browser-playable. Pure logic in src/logic/ (Board,
                    pieces) with vitest tests in test/; Phaser scenes in src/scenes/.
                    Uses Google's public TEST ad unit IDs (src/ads.ts, testMode: true).
@@ -63,10 +64,19 @@ games/cube-dash    Game #5, browser-playable. Geometry-Dash-style auto-runner
                    clears 900px ahead + 1.2s invuln. Visual pass: all textures
                    generated at runtime via Graphics.generateTexture (gradient
                    sky, star/skyline/ground-grid parallax TileSprites, particle
-                   trail/dust/death-burst, GD-style cube face); procedural
+                   trail/dust/death-burst, GD-style cube face); pseudo-3D
+                   pass: 2.5D extruded blocks (lit top + shaded right face,
+                   d=14 up-right), two-tone lit/shaded spikes, beveled cube
+                   (light from top-left everywhere), soft ellipse ground
+                   shadows that shrink/fade with air height, skyline haze +
+                   ground fade gradients; procedural
                    music loop in src/music.ts (132bpm A-minor via @mg/core
                    MusicPlayer), starts on first tap (iOS gesture rule),
-                   mute toggle persisted as "musicMuted".
+                   mute toggle persisted as "musicMuted". Power-up framework
+                   in logic/runner.ts (POWER_UPS registry, tryJump, pickups
+                   spawn 2400-4000px apart in obstacle-free spots, first at
+                   1500px): doubleJump = 10s of one extra air jump, recharged
+                   on landing; gold diamond pickup, aura + "⇈ Ns" badge.
 docs/           Runbooks — phase-0-setup.md is the user's account/toolchain checklist
 ```
 
@@ -77,7 +87,7 @@ npm run dev:2048   # merge-2048 on Vite dev server
 npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
-npm test           # vitest (15 + 12 + 9 + 8 + 13 = 57 tests, all green)
+npm test           # vitest (15 + 12 + 9 + 8 + 20 = 64 tests, all green)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)
 ```

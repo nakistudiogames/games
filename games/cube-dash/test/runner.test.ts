@@ -7,19 +7,24 @@ import {
   PATTERNS,
   PLAYER_SIZE,
   PLAYER_X,
+  POWERUP_SIZE,
   checkDeath,
+  collectsPowerUp,
   jump,
   jumpDistancePx,
+  makePowerUp,
   minGapPx,
   pickPattern,
+  powerUpGapPx,
   speedForDistance,
   stepRunner,
   supportAt,
+  tryJump,
 } from "../src/logic/runner";
-import type { Obstacle, Runner } from "../src/logic/runner";
+import type { Obstacle, PowerUp, Runner } from "../src/logic/runner";
 import { Rng } from "@mg/core";
 
-const onGround = (): Runner => ({ y: GROUND_Y, vy: 0, grounded: true });
+const onGround = (): Runner => ({ y: GROUND_Y, vy: 0, grounded: true, airJumpUsed: false });
 const spike = (x: number): Obstacle => ({ x, w: 60, h: 60, kind: "spike" });
 const block = (x: number, h = 60, w = 120): Obstacle => ({ x, w, h, kind: "block" });
 
@@ -50,11 +55,74 @@ describe("jump physics", () => {
   });
 
   it("starts falling when the support drops away (walking off a block)", () => {
-    const r: Runner = { y: GROUND_Y - 60, vy: 0, grounded: true };
+    const r: Runner = { y: GROUND_Y - 60, vy: 0, grounded: true, airJumpUsed: false };
     stepRunner(r, 1 / 60, GROUND_Y); // block ended; support is now the ground
     expect(r.grounded).toBe(false);
     for (let i = 0; i < 200 && !r.grounded; i++) stepRunner(r, 1 / 120, GROUND_Y);
     expect(r.y).toBe(GROUND_Y);
+  });
+});
+
+describe("double jump power-up", () => {
+  it("allows exactly one extra jump midair while active", () => {
+    const r = onGround();
+    expect(tryJump(r, true)).toBe("ground");
+    stepRunner(r, 0.05, GROUND_Y);
+    expect(tryJump(r, true)).toBe("air");
+    expect(tryJump(r, true)).toBeNull(); // air jump already spent
+  });
+
+  it("denies air jumps when the power-up is not active", () => {
+    const r = onGround();
+    tryJump(r, false);
+    expect(tryJump(r, false)).toBeNull();
+  });
+
+  it("air jump resets its velocity even while falling fast", () => {
+    const r: Runner = { y: 600, vy: 1200, grounded: false, airJumpUsed: false };
+    expect(tryJump(r, true)).toBe("air");
+    expect(r.vy).toBe(JUMP_VELOCITY);
+  });
+
+  it("recharges the air jump on landing", () => {
+    const r = onGround();
+    tryJump(r, true);
+    tryJump(r, true); // spend the air jump
+    for (let i = 0; i < 400 && !r.grounded; i++) stepRunner(r, 1 / 120, GROUND_Y);
+    expect(r.grounded).toBe(true);
+    expect(r.airJumpUsed).toBe(false);
+    stepRunner(r, 0.01, GROUND_Y);
+    tryJump(r, true);
+    expect(tryJump(r, true)).toBe("air");
+  });
+});
+
+describe("power-up pickups", () => {
+  const pickupAt = (x: number, y: number): PowerUp => ({ x, y, kind: "doubleJump" });
+
+  it("collects when the player overlaps the pickup box", () => {
+    const y = GROUND_Y - 120;
+    expect(collectsPowerUp(y + PLAYER_SIZE / 2, pickupAt(PLAYER_X + 20, y))).toBe(true);
+  });
+
+  it("does not collect when horizontally or vertically clear", () => {
+    expect(collectsPowerUp(GROUND_Y, pickupAt(PLAYER_X + 300, GROUND_Y - 30))).toBe(false);
+    // Player on the ground; pickup floating well above its head.
+    expect(
+      collectsPowerUp(GROUND_Y, pickupAt(PLAYER_X, GROUND_Y - PLAYER_SIZE - POWERUP_SIZE)),
+    ).toBe(false);
+  });
+
+  it("spawns within single-jump reach, deterministically per seed", () => {
+    for (let seed = 1; seed <= 30; seed++) {
+      const p = makePowerUp(new Rng(seed), 800);
+      expect(GROUND_Y - p.y).toBeGreaterThanOrEqual(90);
+      expect(GROUND_Y - p.y).toBeLessThanOrEqual(180);
+    }
+    expect(makePowerUp(new Rng(5), 800)).toEqual(makePowerUp(new Rng(5), 800));
+    const gap = powerUpGapPx(new Rng(5));
+    expect(gap).toBeGreaterThanOrEqual(2400);
+    expect(gap).toBeLessThanOrEqual(4000);
   });
 });
 
@@ -71,7 +139,7 @@ describe("support and landing", () => {
 
   it("lands a falling player exactly on the block top", () => {
     const b = block(PLAYER_X);
-    const r: Runner = { y: GROUND_Y - 200, vy: 400, grounded: false };
+    const r: Runner = { y: GROUND_Y - 200, vy: 400, grounded: false, airJumpUsed: false };
     for (let i = 0; i < 200 && !r.grounded; i++) {
       stepRunner(r, 1 / 120, supportAt(r.y, [b]));
     }
