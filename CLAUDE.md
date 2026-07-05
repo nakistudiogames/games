@@ -68,8 +68,19 @@ games/cube-dash    Game #5, browser-playable. Geometry-Dash-style auto-runner
                    600 → spike3 from level 4), gaps ×levelGapScale (1.2→0.75,
                    clearability tested levels 1-25), no spawns in last 1200px
                    runway. HUD: % progress + top progress bar. Storage keys:
-                   "unlockedLevel", "lastPlayed", "bestPct:<n>" ("highScore"/
-                   "bestLevel" are legacy, unused). tap/space/up to jump,
+                   "unlockedLevel", "lastPlayed", "bestPct:<n>", "character"
+                   ("highScore"/"bestLevel" are legacy, unused). Characters:
+                   cosmetic skins in src/characters.ts (pure data/rules,
+                   tested) + characterView.ts (Phaser drawing, shared by game
+                   and menu preview) — dash/blaze/orb/prism/bolt (cube/ball/
+                   diamond shapes), unlock at unlockedLevel ≥ minLevel (1-5),
+                   picker in menu, trail tint follows the skin; each has a
+                   unique always-on aura AROUND the body — hollow outlines /
+                   orbiting elements only, never fills over the sprite
+                   (pulse halo / ember orbit / sonar rings / gem satellites /
+                   lightning arcs; attachAura in characterView.ts, uniqueness
+                   tested) — distinct from the gold double-jump overlay.
+                   tap/space/up to jump,
                    jump buffering (110ms), score = meters; rewarded revive
                    clears 900px ahead + 1.2s invuln. Visual pass: all textures
                    generated at runtime via Graphics.generateTexture (gradient
@@ -97,7 +108,7 @@ npm run dev:2048   # merge-2048 on Vite dev server
 npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
-npm test           # vitest (15 + 12 + 9 + 8 + 25 = 69 tests, all green)
+npm test           # vitest (15 + 12 + 9 + 8 + 29 = 73 tests, all green)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)
 ```

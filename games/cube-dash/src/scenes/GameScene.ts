@@ -24,12 +24,13 @@ import {
 } from "../logic/runner";
 import type { Obstacle, PowerUp, Runner } from "../logic/runner";
 import { adsReady } from "../ads";
+import { characterById } from "../characters";
+import { attachAura, buildCharacterParts } from "../characterView";
 import { music } from "../music";
 import { storage } from "./MenuScene";
 
 const WORLD_WIDTH = 720;
 const WORLD_HEIGHT = 1280;
-const PLAYER_COLOR = 0x26c6da;
 const REVIVE_INVULN_MS = 1200;
 const REVIVE_CLEAR_PX = 900;
 const MAX_DT_MS = 50;
@@ -231,22 +232,17 @@ export class GameScene extends Phaser.Scene {
 
   private buildPlayer(): void {
     const s = PLAYER_SIZE;
+    const spec = characterById(storage.get("character", "dash"));
+    // Gold overlay shown only while the double-jump power-up is active —
+    // distinct from the character's always-on signature aura.
     this.aura = this.add.rectangle(0, 0, s + 18, s + 18, 0xffd54f, 0.28).setVisible(false);
-    const body = this.add.rectangle(0, 0, s, s, PLAYER_COLOR).setStrokeStyle(5, 0x0a2a30);
-    // Bevel: lit top/left edges, shaded bottom/right — light from the top-left.
-    const litTop = this.add.rectangle(0, -s / 2 + 7, s - 12, 5, 0x9ef3fc);
-    const litLeft = this.add.rectangle(-s / 2 + 7, 0, 5, s - 12, 0x9ef3fc);
-    const shadeBottom = this.add.rectangle(0, s / 2 - 7, s - 12, 5, 0x0d7d8f);
-    const shadeRight = this.add.rectangle(s / 2 - 7, 0, 5, s - 12, 0x0d7d8f);
-    const face = this.add.rectangle(0, 0, s - 26, s - 26, 0x63e5f5);
-    const eyeL = this.add.rectangle(-9, -6, 9, 14, 0x0a2a30);
-    const eyeR = this.add.rectangle(11, -6, 9, 14, 0x0a2a30);
-    const mouth = this.add.rectangle(1, 12, 22, 6, 0x0a2a30);
     this.playerView = this.add
       .container(PLAYER_X + s / 2, GROUND_Y - s / 2, [
-        this.aura, body, litTop, litLeft, shadeBottom, shadeRight, face, eyeL, eyeR, mouth,
+        this.aura,
+        ...buildCharacterParts(this, spec, s),
       ])
       .setDepth(10);
+    attachAura(this, this.playerView, spec, s);
 
     this.playerShadow = this.add
       .image(PLAYER_X + s / 2, GROUND_Y + 9, "shadowtex")
@@ -260,7 +256,7 @@ export class GameScene extends Phaser.Scene {
       frequency: 28,
       scale: { start: 1.1, end: 0 },
       alpha: { start: 0.45, end: 0 },
-      tint: [0x26c6da, 0x4dd0e1, 0xffffff],
+      tint: [...spec.trail],
       emitting: false,
     });
     this.trail.setDepth(9);
