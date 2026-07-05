@@ -26,7 +26,9 @@ Full roadmap: `~/.claude/plans/i-want-you-to-wise-rain.md`.
 ## Repo layout
 ```
 packages/core   @mg/core — GameStorage (namespaced localStorage), Rng (seedable
-                           mulberry32), sfx (WebAudio synth, zero audio assets)
+                           mulberry32), sfx (WebAudio synth), MusicPlayer
+                           (WebAudio 16-step sequencer: kick/hat/bass/lead from
+                           a MusicPattern — procedural music, zero audio assets)
 packages/ads    @mg/ads  — AdsService interface; NoopAds on web, AdmobAds on native
                            (@capacitor-community/admob: UMP consent, interstitial
                            cooldown default 90s, rewarded via event listeners —
@@ -51,6 +53,20 @@ games/word-rush    Game #4, browser-playable. Wordle-style endless streak: word
                    src/logic/words.ts (tested); on-screen QWERTY + physical
                    keyboard; rewarded hint reveals one unsolved letter/round;
                    interstitial when out of guesses. "highScore" = best streak.
+games/cube-dash    Game #5, browser-playable. Geometry-Dash-style auto-runner
+                   (named to avoid the trademark): pure physics in
+                   src/logic/runner.ts (tested) — jump/gravity, block-top
+                   landing vs side-hit death, inset spike hitboxes, pattern
+                   spawner with speed-gated patterns (spike3 needs ≥540 px/s)
+                   and clearability invariants tested; tap/space/up to jump,
+                   jump buffering (110ms), score = meters; rewarded revive
+                   clears 900px ahead + 1.2s invuln. Visual pass: all textures
+                   generated at runtime via Graphics.generateTexture (gradient
+                   sky, star/skyline/ground-grid parallax TileSprites, particle
+                   trail/dust/death-burst, GD-style cube face); procedural
+                   music loop in src/music.ts (132bpm A-minor via @mg/core
+                   MusicPlayer), starts on first tap (iOS gesture rule),
+                   mute toggle persisted as "musicMuted".
 docs/           Runbooks — phase-0-setup.md is the user's account/toolchain checklist
 ```
 
@@ -60,7 +76,8 @@ npm run dev        # block-blast on Vite dev server
 npm run dev:2048   # merge-2048 on Vite dev server
 npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
-npm test           # vitest (15 + 12 + 9 + 8 = 44 tests, all green)
+npm run dev:cube   # cube-dash on Vite dev server
+npm test           # vitest (15 + 12 + 9 + 8 + 13 = 57 tests, all green)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)
 ```
@@ -76,15 +93,15 @@ npm run build      # production bundle (vite base './' so file:// works in Capac
 - Interstitial fires at game over (cooldown-capped in @mg/ads)
 
 ## Status / next steps
-1. ✅ Monorepo + games 1-4 (block-blast, merge-2048, flap-dash, word-rush)
-   playable in browser; tests/typecheck/build green (2026-07-04).
+1. ✅ Monorepo + ALL 5 GAMES (block-blast, merge-2048, flap-dash, word-rush,
+   cube-dash) playable in browser; tests/typecheck/build green (2026-07-04).
    Publication still pilot-first.
 2. ⏳ USER: Phase 0 accounts — Play Console ($25; new personal accounts need a
    closed test with **12 testers opted in for 14 consecutive days per app** before
    production), Apple Developer ($99/yr), AdMob + tax info, Xcode + Android Studio
 3. Next Claude step once #2 lands: `npx cap add ios android` in games/block-blast,
-   validate AdmobAds on real devices with test ads, then store listings + publish
-4. Game #5 candidate: solitaire / minimalist card game
+   validate AdmobAds on real devices with test ads, then store listings + publish;
+   roll shells out to the other four games on the proven checklist
 
 ## Ongoing ops (Phase 5, once games are live)
 Weekly revenue/retention reports, review-reply drafting, SDK update checks —
