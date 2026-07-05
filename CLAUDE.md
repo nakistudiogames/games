@@ -59,7 +59,14 @@ games/cube-dash    Game #5, browser-playable. Geometry-Dash-style auto-runner
                    src/logic/runner.ts (tested) — jump/gravity, block-top
                    landing vs side-hit death, inset spike hitboxes, pattern
                    spawner with speed-gated patterns (spike3 needs ≥540 px/s)
-                   and clearability invariants tested. Level system (GD-style
+                   and clearability invariants tested. Obstacles have `elev`
+                   (floating layer): kill only inside their vertical band, so
+                   run-under is safe (elev ≥ 80 invariant tested); elevated
+                   platform tops ≤ 190 (single-jump reach, tested). Layered
+                   patterns by level: stairs L2, tunnel/airMine L3, skyway L4,
+                   mineCombo L5; air mines render as inverted spikes.
+                   Background gains a 2nd skyline layer at L3 (foreground
+                   speed streaks were tried and removed per user). Level system (GD-style
                    discrete levels): select in menu (◀ ▶), each level is a
                    fixed run (600m + 150m/level, cap 1500m) ending at a
                    checkered finish line; clearing unlocks the next. Layouts
@@ -108,7 +115,7 @@ npm run dev:2048   # merge-2048 on Vite dev server
 npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
-npm test           # vitest (15 + 12 + 9 + 8 + 29 = 73 tests, all green)
+npm test           # vitest (15 + 12 + 9 + 8 + 34 = 78 tests, all green)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)
 ```

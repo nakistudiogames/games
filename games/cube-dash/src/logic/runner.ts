@@ -30,8 +30,10 @@ export interface Obstacle {
   /** Left edge in world pixels (scrolls toward the player). */
   x: number;
   w: number;
-  /** Height above the ground line. */
+  /** Height of the obstacle body itself. */
   h: number;
+  /** Bottom edge's height above the ground: 0 = grounded, >0 = floating. */
+  elev: number;
   kind: ObstacleKind;
 }
 
@@ -114,7 +116,7 @@ export function supportAt(bottomY: number, obstacles: readonly Obstacle[]): numb
   let support = GROUND_Y;
   for (const o of obstacles) {
     if (o.kind !== "block") continue;
-    const top = GROUND_Y - o.h;
+    const top = GROUND_Y - o.elev - o.h;
     const overlapsX = PLAYER_X + PLAYER_SIZE > o.x && PLAYER_X < o.x + o.w;
     if (overlapsX && bottomY <= top + 8) support = Math.min(support, top);
   }
@@ -144,17 +146,28 @@ export function stepRunner(r: Runner, dtSec: number, support: number): void {
  * True when the player is fatally overlapping an obstacle.
  * Spikes use an inset hitbox for fairness; blocks kill only when the player's
  * body is inside them (i.e. hit the side) — standing on top is safe.
+ * Floating obstacles only kill inside their vertical band, so the player can
+ * run underneath them.
  */
 export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boolean {
   const pl = PLAYER_X;
   const pr = PLAYER_X + PLAYER_SIZE;
+  const pt = bottomY - PLAYER_SIZE;
   for (const o of obstacles) {
-    const top = GROUND_Y - o.h;
+    const top = GROUND_Y - o.elev - o.h;
+    const bottom = GROUND_Y - o.elev;
     if (o.kind === "spike") {
       const inset = 16;
-      if (pr > o.x + inset && pl < o.x + o.w - inset && bottomY > top + 12) return true;
+      if (
+        pr > o.x + inset &&
+        pl < o.x + o.w - inset &&
+        bottomY > top + 12 &&
+        pt < bottom - 12
+      ) {
+        return true;
+      }
     } else {
-      if (pr > o.x && pl < o.x + o.w && bottomY > top + 8) return true;
+      if (pr > o.x && pl < o.x + o.w && bottomY > top + 8 && pt < bottom - 4) return true;
     }
   }
   return false;
@@ -163,7 +176,7 @@ export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boo
 /** An obstacle group spawned as a unit; dx is relative to the pattern start. */
 export interface Pattern {
   id: string;
-  obstacles: ReadonlyArray<{ dx: number; w: number; h: number; kind: ObstacleKind }>;
+  obstacles: ReadonlyArray<{ dx: number; w: number; h: number; kind: ObstacleKind; elev?: number }>;
   /** Total footprint used for spacing to the next pattern. */
   width: number;
   /** Patterns needing longer jumps unlock at higher scroll speeds. */
@@ -201,6 +214,56 @@ export const PATTERNS: readonly Pattern[] = [
     ],
     width: 360,
     minSpeed: 0,
+  },
+  // --- layered patterns, unlocked as levels speed up ---
+  {
+    // Two-step climb: hop up, hop again (or one big jump to the top).
+    id: "stairs",
+    obstacles: [
+      { dx: 0, w: 90, h: 60, kind: "block" },
+      { dx: 90, w: 90, h: 120, kind: "block" },
+    ],
+    width: 180,
+    minSpeed: 460, // level 2+
+  },
+  {
+    // Overhead slab: forces the player to STAY LOW, then hop a spike after.
+    id: "tunnel",
+    obstacles: [
+      { dx: 0, w: 240, h: 60, kind: "block", elev: 90 },
+      { dx: 360, w: 60, h: 60, kind: "spike" },
+    ],
+    width: 420,
+    minSpeed: 500, // level 3+
+  },
+  {
+    // Floating mine at jump height: safe to run under, fatal to jump into.
+    id: "airMine",
+    obstacles: [{ dx: 0, w: 54, h: 54, kind: "spike", elev: 110 }],
+    width: 54,
+    minSpeed: 500, // level 3+
+  },
+  {
+    // Elevated skyway over a spike field: jump onto the platform, ride it,
+    // hop off over the last spikes.
+    id: "skyway",
+    obstacles: [
+      { dx: 0, w: 240, h: 30, kind: "block", elev: 120 },
+      { dx: 60, w: 120, h: 60, kind: "spike" },
+      { dx: 180, w: 120, h: 60, kind: "spike" },
+    ],
+    width: 320,
+    minSpeed: 540, // level 4+
+  },
+  {
+    // Ground spike, then a mine hanging over the landing zone: jump EARLY.
+    id: "mineCombo",
+    obstacles: [
+      { dx: 0, w: 60, h: 60, kind: "spike" },
+      { dx: 210, w: 54, h: 54, kind: "spike", elev: 130 },
+    ],
+    width: 264,
+    minSpeed: 580, // level 5+
   },
 ];
 

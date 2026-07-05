@@ -30,8 +30,8 @@ import type { Obstacle, PowerUp, Runner } from "../src/logic/runner";
 import { Rng } from "@mg/core";
 
 const onGround = (): Runner => ({ y: GROUND_Y, vy: 0, grounded: true, airJumpUsed: false });
-const spike = (x: number): Obstacle => ({ x, w: 60, h: 60, kind: "spike" });
-const block = (x: number, h = 60, w = 120): Obstacle => ({ x, w, h, kind: "block" });
+const spike = (x: number, elev = 0): Obstacle => ({ x, w: 60, h: 60, elev, kind: "spike" });
+const block = (x: number, h = 60, w = 120, elev = 0): Obstacle => ({ x, w, h, elev, kind: "block" });
 
 describe("jump physics", () => {
   it("jumps only when grounded", () => {
@@ -167,6 +167,60 @@ describe("death detection", () => {
     const b = block(PLAYER_X + 20);
     expect(checkDeath(GROUND_Y, [b])).toBe(true); // body inside block = side hit
     expect(checkDeath(GROUND_Y - 60, [b])).toBe(false); // standing exactly on top
+  });
+});
+
+describe("floating obstacles (vertical layer)", () => {
+  it("lets the player run under a floating block, but not jump through it", () => {
+    const slab = block(PLAYER_X, 60, 240, 90); // tunnel slab: band 90-150 up
+    expect(checkDeath(GROUND_Y, [slab])).toBe(false); // running underneath
+    expect(checkDeath(GROUND_Y - 100, [slab])).toBe(true); // jumped into the band
+  });
+
+  it("air mines are safe underneath and fatal inside their band", () => {
+    const mine = spike(PLAYER_X, 110); // band 110-170 up
+    expect(checkDeath(GROUND_Y, [mine])).toBe(false); // grounded, safe
+    expect(checkDeath(GROUND_Y - 140, [mine])).toBe(true); // mid-jump collision
+  });
+
+  it("elevated platforms act as landing support from above only", () => {
+    const platform = block(PLAYER_X, 30, 240, 120); // skyway: top at 150 up
+    expect(supportAt(GROUND_Y - 200, [platform])).toBe(GROUND_Y - 150);
+    expect(supportAt(GROUND_Y, [platform])).toBe(GROUND_Y); // below it: no support
+    const r: Runner = { y: GROUND_Y - 250, vy: 300, grounded: false, airJumpUsed: false };
+    for (let i = 0; i < 200 && !r.grounded; i++) {
+      stepRunner(r, 1 / 120, supportAt(r.y, [platform]));
+    }
+    expect(r.y).toBe(GROUND_Y - 150);
+  });
+
+  it("every elevated platform in the pattern set is reachable by one jump", () => {
+    for (const p of PATTERNS) {
+      for (const o of p.obstacles) {
+        if (o.kind === "block" && (o.elev ?? 0) > 0) {
+          // Jump apex ≈ 200px: platform tops must sit below it with margin.
+          expect((o.elev ?? 0) + o.h).toBeLessThanOrEqual(190);
+        }
+        if ((o.elev ?? 0) > 0) {
+          // Anything floating must leave run-under clearance for the player.
+          expect(o.elev ?? 0).toBeGreaterThanOrEqual(PLAYER_SIZE + 20);
+        }
+      }
+    }
+  });
+
+  it("gates layered patterns behind higher speeds", () => {
+    const slowIds = new Set(
+      Array.from({ length: 300 }, (_, i) => pickPattern(new Rng(i), BASE_SPEED).id),
+    );
+    for (const id of ["tunnel", "airMine", "skyway", "mineCombo"]) {
+      expect(slowIds.has(id)).toBe(false);
+    }
+    const fastIds = new Set(
+      Array.from({ length: 300 }, (_, i) => pickPattern(new Rng(i), 600).id),
+    );
+    expect(fastIds.has("skyway")).toBe(true);
+    expect(fastIds.has("tunnel")).toBe(true);
   });
 });
 

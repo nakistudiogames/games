@@ -66,6 +66,7 @@ export class GameScene extends Phaser.Scene {
   private burst!: Phaser.GameObjects.Particles.ParticleEmitter;
   private bgFar!: Phaser.GameObjects.TileSprite;
   private bgMid!: Phaser.GameObjects.TileSprite;
+  private bgMid2: Phaser.GameObjects.TileSprite | null = null;
   private groundTile!: Phaser.GameObjects.TileSprite;
   private obstacles: ObstacleView[] = [];
   private powerUps: PowerUpView[] = [];
@@ -74,6 +75,8 @@ export class GameScene extends Phaser.Scene {
   private phase: Phase = "ready";
   private distancePx = 0;
   private scoreText!: Phaser.GameObjects.Text;
+  private timerText!: Phaser.GameObjects.Text;
+  private elapsedMs = 0;
   private levelText!: Phaser.GameObjects.Text;
   private powerBadge!: Phaser.GameObjects.Text;
   private progressFill!: Phaser.GameObjects.Rectangle;
@@ -103,6 +106,7 @@ export class GameScene extends Phaser.Scene {
     this.rng = new Rng(levelSeed(this.levelNum));
     this.phase = "ready";
     this.distancePx = 0;
+    this.elapsedMs = 0;
     this.usedContinue = false;
     this.invulnMs = 0;
     this.jumpBufferMs = 0;
@@ -212,6 +216,17 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0)
       .setDepth(2)
       .setAlpha(0.55); // atmospheric haze pushes the skyline into the distance
+    // Extra depth layer appears as the levels progress.
+    this.bgMid2 = null;
+    if (this.levelNum >= 3) {
+      this.bgMid2 = this.add
+        .tileSprite(0, GROUND_Y - 545, WORLD_WIDTH, 224, "skyline")
+        .setOrigin(0)
+        .setDepth(1)
+        .setAlpha(0.3);
+      this.bgMid2.setTileScale(0.7);
+    }
+
     const haze = this.add.graphics().setDepth(3);
     haze.fillGradientStyle(0x2a1650, 0x2a1650, 0x2a1650, 0x2a1650, 0, 0, 0.35, 0.35);
     haze.fillRect(0, GROUND_Y - 320, WORLD_WIDTH, 320);
@@ -307,6 +322,16 @@ export class GameScene extends Phaser.Scene {
       .setDepth(20);
     this.scoreText.setShadow(0, 6, "#000000", 8, false, true);
 
+    this.timerText = this.add
+      .text(WORLD_WIDTH / 2 + 145, 110, "0.0s", {
+        fontFamily: "Arial, sans-serif",
+        fontSize: "30px",
+        color: "#8a93a8",
+      })
+      .setOrigin(0, 0.5)
+      .setDepth(20);
+    this.timerText.setShadow(0, 4, "#000000", 6, false, true);
+
     this.levelText = this.add
       .text(WORLD_WIDTH / 2, 172, `LEVEL ${this.levelNum}`, {
         fontFamily: "Arial, sans-serif",
@@ -390,12 +415,14 @@ export class GameScene extends Phaser.Scene {
 
   override update(time: number, deltaMs: number): void {
     if (this.phase !== "playing") return;
+    this.elapsedMs += deltaMs;
     const dt = Math.min(deltaMs, MAX_DT_MS) / 1000;
     const speed = levelSpeed(this.levelNum);
     this.distancePx += speed * dt;
 
     // Parallax: far stars drift, skyline rolls, ground grid matches the track.
     this.bgFar.tilePositionX += speed * dt * 0.12;
+    if (this.bgMid2) this.bgMid2.tilePositionX += speed * dt * 0.22;
     this.bgMid.tilePositionX += speed * dt * 0.4;
     this.groundTile.tilePositionX += speed * dt;
 
@@ -431,6 +458,7 @@ export class GameScene extends Phaser.Scene {
     this.playerShadow.setScale(1.25 * shadowF, shadowF).setAlpha(0.35 + 0.45 * shadowF);
 
     this.scoreText.setText(`${this.progressPct()}%`);
+    this.timerText.setText(`${(this.elapsedMs / 1000).toFixed(1)}s`);
     this.progressFill.setScale(Math.min(1, this.distancePx / this.levelLengthPx), 1);
 
     if (this.remainingPx() <= 40) {
@@ -567,24 +595,40 @@ export class GameScene extends Phaser.Scene {
     const startX = Math.max(WORLD_WIDTH + 40, lastEnd + gap);
     const pattern = pickPattern(this.rng, speed);
     for (const spec of pattern.obstacles) {
-      const obs: Obstacle = { x: startX + spec.dx, w: spec.w, h: spec.h, kind: spec.kind };
+      const obs: Obstacle = {
+        x: startX + spec.dx,
+        w: spec.w,
+        h: spec.h,
+        elev: spec.elev ?? 0,
+        kind: spec.kind,
+      };
       this.obstacles.push({ obs, view: this.buildObstacleView(obs) });
     }
   }
 
   private buildObstacleView(obs: Obstacle): Phaser.GameObjects.Container {
-    const top = GROUND_Y - obs.h;
+    const top = GROUND_Y - obs.elev - obs.h;
     const container = this.add.container(obs.x, top).setDepth(8);
     const { w, h } = obs;
+    const floating = obs.elev > 0;
 
+    // Shadow falls on the ground below — smaller/fainter for floating objects.
     const shadow = this.add
-      .image(w / 2 + 8, h + 7, "shadowtex")
-      .setScale((w + 36) / 96, 0.8)
-      .setAlpha(0.55);
+      .image(w / 2 + 8, h + obs.elev + 7, "shadowtex")
+      .setScale(((w + 36) / 96) * (floating ? 0.7 : 1), floating ? 0.55 : 0.8)
+      .setAlpha(floating ? 0.3 : 0.55);
     container.add(shadow);
 
     const g = this.add.graphics();
-    if (obs.kind === "spike") {
+    if (obs.kind === "spike" && floating) {
+      // Air mine: inverted spike hanging in the flight path.
+      g.fillStyle(0xef5350);
+      g.fillPoints([{ x: 0, y: 0 }, { x: w / 2, y: 0 }, { x: w / 2, y: h }], true);
+      g.fillStyle(0x8e2320);
+      g.fillPoints([{ x: w / 2, y: 0 }, { x: w, y: 0 }, { x: w / 2, y: h }], true);
+      g.lineStyle(3, 0xff8a80, 0.9);
+      g.strokePoints([{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w / 2, y: h }], true);
+    } else if (obs.kind === "spike") {
       // Two-tone faces: lit left, shaded right — same light as the cube bevel.
       g.fillStyle(0xef5350);
       g.fillPoints([{ x: 0, y: h }, { x: w / 2, y: 0 }, { x: w / 2, y: h }], true);
@@ -650,7 +694,7 @@ export class GameScene extends Phaser.Scene {
     );
     overlay.add(
       this.add
-        .text(width / 2, height * 0.44, `Level ${this.levelNum} cleared\nLevel ${this.levelNum + 1} unlocked!`, {
+        .text(width / 2, height * 0.44, `Level ${this.levelNum} cleared in ${(this.elapsedMs / 1000).toFixed(1)}s\nLevel ${this.levelNum + 1} unlocked!`, {
           fontFamily: "Arial, sans-serif",
           fontSize: "44px",
           color: "#ffd54f",
