@@ -59,7 +59,19 @@ games/cube-dash    Game #5, browser-playable. Geometry-Dash-style auto-runner
                    src/logic/runner.ts (tested) — jump/gravity, block-top
                    landing vs side-hit death, inset spike hitboxes, pattern
                    spawner with speed-gated patterns (spike3 needs ≥540 px/s)
-                   and clearability invariants tested. Obstacles have `elev`
+                   and clearability invariants tested. Obstacle KINDS unlock
+                   +1 per world (KIND_UNLOCK_LEVEL / obstacleKindsForLevel,
+                   tested): spike+block from L1, saw L6 (ground buzzsaw,
+                   circular hitbox, spins), pit L11 (lava trench, lethal only
+                   at ground level — jump across, width-jumpable tested),
+                   swing L16 (spike ball bobbing elev 10-130 as a pure
+                   function of x via swingElev(o.x, o.phase) — phase drawn
+                   from the level rng; every height clearable: ≤120 jumpable
+                   over, ≥80 run-underable), laser L21 (thin 24x130 pylon
+                   beam, always lethal — the pulse is visual only). Patterns
+                   gate on BOTH minSpeed and minLevel (pickPattern(rng,
+                   speed, level)); world-1 layouts unchanged by the feature
+                   since all new patterns are minLevel ≥ 6. Obstacles have `elev`
                    (floating layer): kill only inside their vertical band, so
                    run-under is safe (elev ≥ 80 invariant tested); elevated
                    platform tops ≤ 190 (single-jump reach, tested). Layered
@@ -131,7 +143,7 @@ npm run dev:2048   # merge-2048 on Vite dev server
 npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
-npm test           # vitest (15 + 12 + 9 + 8 + 38 = 82 tests, all green)
+npm test           # vitest (15 + 12 + 9 + 8 + 54 = 98 tests, all green)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)
 ```

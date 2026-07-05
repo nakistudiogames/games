@@ -3,11 +3,16 @@ import {
   BASE_SPEED,
   GROUND_Y,
   JUMP_VELOCITY,
+  KIND_UNLOCK_LEVEL,
+  LEVELS_PER_WORLD,
   MAX_SPEED,
   PATTERNS,
   PLAYER_SIZE,
   PLAYER_X,
   POWERUP_SIZE,
+  SWING_AMP,
+  SWING_FREQ,
+  SWING_MID,
   checkDeath,
   collectsPowerUp,
   jump,
@@ -21,13 +26,15 @@ import {
   levelSpeed,
   makePowerUp,
   minGapPx,
+  obstacleKindsForLevel,
   pickPattern,
   powerUpGapPx,
   stepRunner,
   supportAt,
+  swingElev,
   tryJump,
 } from "../src/logic/runner";
-import type { Obstacle, PowerUp, Runner } from "../src/logic/runner";
+import type { Obstacle, ObstacleKind, PowerUp, Runner } from "../src/logic/runner";
 import { Rng } from "@mg/core";
 
 const onGround = (): Runner => ({ y: GROUND_Y, vy: 0, grounded: true, airJumpUsed: false });
@@ -212,13 +219,13 @@ describe("floating obstacles (vertical layer)", () => {
 
   it("gates layered patterns behind higher speeds", () => {
     const slowIds = new Set(
-      Array.from({ length: 300 }, (_, i) => pickPattern(new Rng(i), BASE_SPEED).id),
+      Array.from({ length: 300 }, (_, i) => pickPattern(new Rng(i), BASE_SPEED, 25).id),
     );
     for (const id of ["tunnel", "airMine", "skyway", "mineCombo"]) {
       expect(slowIds.has(id)).toBe(false);
     }
     const fastIds = new Set(
-      Array.from({ length: 300 }, (_, i) => pickPattern(new Rng(i), 600).id),
+      Array.from({ length: 300 }, (_, i) => pickPattern(new Rng(i), 600, 25).id),
     );
     expect(fastIds.has("skyway")).toBe(true);
     expect(fastIds.has("tunnel")).toBe(true);
@@ -245,8 +252,8 @@ describe("level system", () => {
     expect(levelSeed(3)).not.toBe(levelSeed(4));
     const a = new Rng(levelSeed(3));
     const b = new Rng(levelSeed(3));
-    const idsA = Array.from({ length: 20 }, () => pickPattern(a, 500).id);
-    const idsB = Array.from({ length: 20 }, () => pickPattern(b, 500).id);
+    const idsA = Array.from({ length: 20 }, () => pickPattern(a, 500, 3).id);
+    const idsB = Array.from({ length: 20 }, () => pickPattern(b, 500, 3).id);
     expect(idsA).toEqual(idsB);
   });
 
@@ -302,16 +309,167 @@ describe("difficulty and patterns", () => {
 
   it("gates long patterns behind higher speeds", () => {
     const slowIds = new Set(
-      Array.from({ length: 200 }, (_, i) => pickPattern(new Rng(i), BASE_SPEED).id),
+      Array.from({ length: 200 }, (_, i) => pickPattern(new Rng(i), BASE_SPEED, 1).id),
     );
     expect(slowIds.has("spike3")).toBe(false);
     const fastIds = new Set(
-      Array.from({ length: 200 }, (_, i) => pickPattern(new Rng(i), 560).id),
+      Array.from({ length: 300 }, (_, i) => pickPattern(new Rng(i), 560, 25).id),
     );
     expect(fastIds.has("spike3")).toBe(true);
   });
 
   it("pattern gap leaves room to react and jump", () => {
     expect(minGapPx(BASE_SPEED)).toBeGreaterThan(jumpDistancePx(BASE_SPEED));
+  });
+});
+
+describe("world obstacle unlocks (+1 kind per world)", () => {
+  it("world 1 has 2 kinds, then one more unlocks per world", () => {
+    expect(obstacleKindsForLevel(1).sort()).toEqual(["block", "spike"]);
+    expect(obstacleKindsForLevel(5)).toHaveLength(2);
+    expect(obstacleKindsForLevel(6)).toHaveLength(3); // + saw
+    expect(obstacleKindsForLevel(6)).toContain("saw");
+    expect(obstacleKindsForLevel(10)).toHaveLength(3);
+    expect(obstacleKindsForLevel(11)).toHaveLength(4); // + pit
+    expect(obstacleKindsForLevel(11)).toContain("pit");
+    expect(obstacleKindsForLevel(16)).toHaveLength(5); // + swing
+    expect(obstacleKindsForLevel(16)).toContain("swing");
+    expect(obstacleKindsForLevel(21)).toHaveLength(6); // + laser
+    expect(obstacleKindsForLevel(21)).toContain("laser");
+  });
+
+  it("unlock levels land on the first level of each world", () => {
+    for (const level of Object.values(KIND_UNLOCK_LEVEL)) {
+      expect((level - 1) % LEVELS_PER_WORLD).toBe(0);
+    }
+  });
+
+  it("no pattern uses a kind before its world unlocks it", () => {
+    for (const p of PATTERNS) {
+      for (const o of p.obstacles) {
+        expect(p.minLevel ?? 1).toBeGreaterThanOrEqual(KIND_UNLOCK_LEVEL[o.kind]);
+      }
+    }
+  });
+
+  it("pickPattern only deals unlocked kinds at each level", () => {
+    const kindsAt = (level: number): Set<ObstacleKind> => {
+      const s = new Set<ObstacleKind>();
+      for (let i = 0; i < 500; i++) {
+        for (const o of pickPattern(new Rng(i), levelSpeed(level), level).obstacles) {
+          s.add(o.kind);
+        }
+      }
+      return s;
+    };
+    const world1 = kindsAt(5);
+    for (const k of ["saw", "pit", "swing", "laser"] as const) {
+      expect(world1.has(k)).toBe(false);
+    }
+    const world2 = kindsAt(10);
+    expect(world2.has("saw")).toBe(true);
+    expect(world2.has("pit")).toBe(false);
+    const world5 = kindsAt(25);
+    for (const k of ["spike", "block", "saw", "pit", "swing", "laser"] as const) {
+      expect(world5.has(k)).toBe(true);
+    }
+  });
+});
+
+describe("saw (world 2): round hitbox on the ground", () => {
+  const saw = (x: number): Obstacle => ({ x, w: 90, h: 90, elev: 0, kind: "saw" });
+
+  it("kills on body overlap", () => {
+    expect(checkDeath(GROUND_Y, [saw(PLAYER_X)])).toBe(true);
+  });
+
+  it("forgives a bounding-box graze that misses the disc", () => {
+    // 4px of box overlap at the leading edge: the circle is still 41px away.
+    expect(checkDeath(GROUND_Y, [saw(PLAYER_X + PLAYER_SIZE - 4)])).toBe(false);
+  });
+
+  it("is cleared by a jump and gives no landing support", () => {
+    expect(checkDeath(GROUND_Y - 160, [saw(PLAYER_X)])).toBe(false);
+    expect(supportAt(GROUND_Y - 200, [saw(PLAYER_X)])).toBe(GROUND_Y);
+  });
+});
+
+describe("pit (world 3): lava trench, lethal only at ground level", () => {
+  const pit = (x: number): Obstacle => ({ x, w: 150, h: 24, elev: 0, kind: "pit" });
+
+  it("kills a grounded player over the trench, not an airborne one", () => {
+    expect(checkDeath(GROUND_Y, [pit(PLAYER_X)])).toBe(true);
+    expect(checkDeath(GROUND_Y - 40, [pit(PLAYER_X)])).toBe(false);
+  });
+
+  it("forgives the edge inset on both lips", () => {
+    expect(checkDeath(GROUND_Y, [pit(PLAYER_X + PLAYER_SIZE - 22)])).toBe(false);
+    expect(checkDeath(GROUND_Y, [pit(PLAYER_X - 150 + 22)])).toBe(false);
+  });
+
+  it("every pit pattern is jumpable at its unlock speed", () => {
+    for (const p of PATTERNS) {
+      for (const o of p.obstacles) {
+        if (o.kind !== "pit") continue;
+        const speed = levelSpeed(p.minLevel ?? 1);
+        expect(jumpDistancePx(speed)).toBeGreaterThan(o.w + PLAYER_SIZE + 20);
+      }
+    }
+  });
+});
+
+describe("swing mine (world 4): bobs as a pure function of x", () => {
+  const mineAt = (x: number, phase: number): Obstacle => ({
+    x, w: 54, h: 54, elev: 0, kind: "swing", phase,
+  });
+  /** Phase that puts the bob at its highest (+) or lowest (-) point at x. */
+  const phaseFor = (x: number, sign: 1 | -1): number =>
+    (sign * Math.PI) / 2 - x * SWING_FREQ;
+
+  it("stays inside a band that is always clearable one way or the other", () => {
+    // [10, 130]: ≤120 fits under a jump (apex ≈ 200), ≥80 allows run-under —
+    // the two bands overlap, so every height on the cycle is passable.
+    for (let x = 0; x < 1000; x += 37) {
+      const elev = swingElev(mineAt(x, 1.3));
+      expect(elev).toBeGreaterThanOrEqual(SWING_MID - SWING_AMP);
+      expect(elev).toBeLessThanOrEqual(SWING_MID + SWING_AMP);
+    }
+    expect(SWING_MID - SWING_AMP).toBe(10);
+    expect(SWING_MID + SWING_AMP).toBe(130);
+  });
+
+  it("is deterministic: same x and phase, same height", () => {
+    expect(swingElev(mineAt(423, 2))).toBe(swingElev(mineAt(423, 2)));
+  });
+
+  it("high point: safe to run under, fatal to jump into", () => {
+    const high = mineAt(PLAYER_X, phaseFor(PLAYER_X, 1)); // elev 130
+    expect(swingElev(high)).toBeCloseTo(130);
+    expect(checkDeath(GROUND_Y, [high])).toBe(false);
+    expect(checkDeath(GROUND_Y - 140, [high])).toBe(true);
+  });
+
+  it("low point: fatal on the ground, cleared by a jump", () => {
+    const low = mineAt(PLAYER_X, phaseFor(PLAYER_X, -1)); // elev 10
+    expect(swingElev(low)).toBeCloseTo(10);
+    expect(checkDeath(GROUND_Y, [low])).toBe(true);
+    expect(checkDeath(GROUND_Y - 150, [low])).toBe(false);
+  });
+});
+
+describe("laser pylon (world 5): thin, tall, always on", () => {
+  const laser = (x: number): Obstacle => ({ x, w: 24, h: 130, elev: 0, kind: "laser" });
+
+  it("kills on beam contact, cleared by a well-timed jump", () => {
+    expect(checkDeath(GROUND_Y, [laser(PLAYER_X)])).toBe(true);
+    expect(checkDeath(GROUND_Y - 140, [laser(PLAYER_X)])).toBe(false);
+  });
+
+  it("every laser in the pattern set fits under the jump apex with margin", () => {
+    for (const p of PATTERNS) {
+      for (const o of p.obstacles) {
+        if (o.kind === "laser") expect(o.h).toBeLessThanOrEqual(150);
+      }
+    }
   });
 });

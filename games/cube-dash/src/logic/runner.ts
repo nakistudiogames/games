@@ -24,7 +24,13 @@ export interface Runner {
   airJumpUsed: boolean;
 }
 
-export type ObstacleKind = "spike" | "block";
+/**
+ * One new kind unlocks per world (see KIND_UNLOCK_LEVEL):
+ * spike/block from world 1, saw (ground buzzsaw, circular hitbox) world 2,
+ * pit (lava trench, lethal only at ground level) world 3, swing (spike ball
+ * bobbing up/down as it scrolls) world 4, laser (thin tall pylon beam) world 5.
+ */
+export type ObstacleKind = "spike" | "block" | "saw" | "pit" | "swing" | "laser";
 
 export interface Obstacle {
   /** Left edge in world pixels (scrolls toward the player). */
@@ -35,6 +41,22 @@ export interface Obstacle {
   /** Bottom edge's height above the ground: 0 = grounded, >0 = floating. */
   elev: number;
   kind: ObstacleKind;
+  /** Bob-cycle offset for "swing" obstacles (assigned from the level rng). */
+  phase?: number;
+}
+
+// Swing mines bob as a pure function of x, so layouts stay deterministic and
+// every attempt at a level shows the identical motion. The elev range
+// [MID-AMP, MID+AMP] = [10, 130] is always clearable: ≤ 120 can be jumped
+// over (apex ≈ 200), ≥ 80 can be run under — the bands overlap.
+export const SWING_MID = 70;
+export const SWING_AMP = 60;
+/** One full bob per 500px of scroll. */
+export const SWING_FREQ = (2 * Math.PI) / 500;
+
+/** Current bottom-edge height of a swing mine above the ground. */
+export function swingElev(o: Obstacle): number {
+  return SWING_MID + SWING_AMP * Math.sin(o.x * SWING_FREQ + (o.phase ?? 0));
 }
 
 // ---------------------------------------------------------------------------
@@ -87,6 +109,22 @@ export const LEVEL_COLORS: readonly number[] = [0x4dd0e1, 0x66bb6a, 0xff7043];
 export function levelColor(level: number): number {
   const world = Math.floor((Math.max(1, level) - 1) / LEVELS_PER_WORLD);
   return LEVEL_COLORS[world % LEVEL_COLORS.length]!;
+}
+
+/** Level at which each obstacle kind first appears: +1 kind per world. */
+export const KIND_UNLOCK_LEVEL: Record<ObstacleKind, number> = {
+  spike: 1,
+  block: 1,
+  saw: 1 + LEVELS_PER_WORLD, // world 2
+  pit: 1 + LEVELS_PER_WORLD * 2, // world 3
+  swing: 1 + LEVELS_PER_WORLD * 3, // world 4
+  laser: 1 + LEVELS_PER_WORLD * 4, // world 5
+};
+
+export function obstacleKindsForLevel(level: number): ObstacleKind[] {
+  return (Object.keys(KIND_UNLOCK_LEVEL) as ObstacleKind[]).filter(
+    (k) => KIND_UNLOCK_LEVEL[k] <= level,
+  );
 }
 
 /** Horizontal distance covered during one full jump at the given speed. */
@@ -157,16 +195,38 @@ export function stepRunner(r: Runner, dtSec: number, support: number): void {
  * Spikes use an inset hitbox for fairness; blocks kill only when the player's
  * body is inside them (i.e. hit the side) — standing on top is safe.
  * Floating obstacles only kill inside their vertical band, so the player can
- * run underneath them.
+ * run underneath them. Saws and swing mines are round (circle hitbox), pits
+ * are lethal only at ground level (jump across), lasers on any beam overlap.
  */
 export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boolean {
   const pl = PLAYER_X;
   const pr = PLAYER_X + PLAYER_SIZE;
   const pt = bottomY - PLAYER_SIZE;
   for (const o of obstacles) {
+    if (o.kind === "pit") {
+      const inset = 22;
+      if (bottomY >= GROUND_Y - 2 && pr > o.x + inset && pl < o.x + o.w - inset) return true;
+      continue;
+    }
+    if (o.kind === "saw" || o.kind === "swing") {
+      const elev = o.kind === "swing" ? swingElev(o) : o.elev;
+      const r = o.w / 2 - (o.kind === "saw" ? 8 : 6);
+      const cx = o.x + o.w / 2;
+      const cy = GROUND_Y - elev - o.h / 2;
+      // Circle vs player rect: distance from center to the nearest rect point.
+      const nx = Math.max(pl, Math.min(cx, pr));
+      const ny = Math.max(pt, Math.min(cy, bottomY));
+      if ((nx - cx) ** 2 + (ny - cy) ** 2 < r * r) return true;
+      continue;
+    }
     const top = GROUND_Y - o.elev - o.h;
     const bottom = GROUND_Y - o.elev;
-    if (o.kind === "spike") {
+    if (o.kind === "laser") {
+      const inset = 6;
+      if (pr > o.x + inset && pl < o.x + o.w - inset && bottomY > top + 6 && pt < bottom) {
+        return true;
+      }
+    } else if (o.kind === "spike") {
       const inset = 16;
       if (
         pr > o.x + inset &&
@@ -191,6 +251,11 @@ export interface Pattern {
   width: number;
   /** Patterns needing longer jumps unlock at higher scroll speeds. */
   minSpeed: number;
+  /**
+   * Patterns built on later worlds' obstacle kinds unlock at that world's
+   * first level (default 1). Must be ≥ KIND_UNLOCK_LEVEL of every kind used.
+   */
+  minLevel?: number;
 }
 
 export const PATTERNS: readonly Pattern[] = [
@@ -275,10 +340,90 @@ export const PATTERNS: readonly Pattern[] = [
     width: 264,
     minSpeed: 580, // level 5+
   },
+  // --- new obstacle KINDS, one unlocking per world (KIND_UNLOCK_LEVEL) ---
+  {
+    // Spinning buzzsaw: taller than a spike, round hitbox — jump it clean.
+    id: "saw1",
+    obstacles: [{ dx: 0, w: 90, h: 90, kind: "saw" }],
+    width: 90,
+    minSpeed: 0,
+    minLevel: 6, // world 2
+  },
+  {
+    // Saw, breather, spike: two distinct jumps in rhythm.
+    id: "sawSpike",
+    obstacles: [
+      { dx: 0, w: 90, h: 90, kind: "saw" },
+      { dx: 390, w: 60, h: 60, kind: "spike" },
+    ],
+    width: 450,
+    minSpeed: 0,
+    minLevel: 8,
+  },
+  {
+    // Lava trench: harmless in the air, fatal to touch down in — jump across.
+    id: "pit1",
+    obstacles: [{ dx: 0, w: 150, h: 24, kind: "pit" }],
+    width: 150,
+    minSpeed: 0,
+    minLevel: 11, // world 3
+  },
+  {
+    // Trench then saw: land the crossing, immediately set up the next jump.
+    id: "pitSaw",
+    obstacles: [
+      { dx: 0, w: 150, h: 24, kind: "pit" },
+      { dx: 450, w: 90, h: 90, kind: "saw" },
+    ],
+    width: 540,
+    minSpeed: 0,
+    minLevel: 13,
+  },
+  {
+    // Bobbing spike mine: read its height — jump over when low, run under
+    // when high (every point of its cycle is clearable one way or the other).
+    id: "swing1",
+    obstacles: [{ dx: 0, w: 54, h: 54, kind: "swing" }],
+    width: 54,
+    minSpeed: 0,
+    minLevel: 16, // world 4
+  },
+  {
+    // Mine guarding a trench: judge the bob, then commit to the crossing.
+    id: "swingPit",
+    obstacles: [
+      { dx: 0, w: 54, h: 54, kind: "swing" },
+      { dx: 330, w: 150, h: 24, kind: "pit" },
+    ],
+    width: 480,
+    minSpeed: 0,
+    minLevel: 18,
+  },
+  {
+    // Plasma pylon: thin but tall — a late, precise jump.
+    id: "laser1",
+    obstacles: [{ dx: 0, w: 24, h: 130, kind: "laser" }],
+    width: 24,
+    minSpeed: 0,
+    minLevel: 21, // world 5
+  },
+  {
+    // Twin pylons: two precise jumps back to back.
+    id: "laserRow",
+    obstacles: [
+      { dx: 0, w: 24, h: 130, kind: "laser" },
+      { dx: 420, w: 24, h: 130, kind: "laser" },
+    ],
+    width: 444,
+    minSpeed: 0,
+    minLevel: 23,
+  },
 ];
 
-export function pickPattern(rng: Rng, speed: number): Pattern {
-  const available = PATTERNS.filter((p) => p.minSpeed <= speed);
+export function pickPattern(rng: Rng, speed: number, level: number): Pattern {
+  const available = PATTERNS.filter(
+    (p) => p.minSpeed <= speed && (p.minLevel ?? 1) <= level,
+  );
   return rng.pick(available);
 }
 

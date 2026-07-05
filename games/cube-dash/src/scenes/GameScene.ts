@@ -21,6 +21,7 @@ import {
   powerUpGapPx,
   stepRunner,
   supportAt,
+  swingElev,
   tryJump,
 } from "../logic/runner";
 import type { Obstacle, PowerUp, Runner } from "../logic/runner";
@@ -570,6 +571,8 @@ export class GameScene extends Phaser.Scene {
     for (const { obs, view } of this.obstacles) {
       obs.x -= speed * dt;
       view.x = obs.x;
+      // Swing mines bob as a function of x — keep the view on the hitbox.
+      if (obs.kind === "swing") view.y = GROUND_Y - obs.h - swingElev(obs);
     }
     while (this.obstacles.length > 0 && this.obstacles[0]!.obs.x + this.obstacles[0]!.obs.w < -40) {
       this.obstacles.shift()!.view.destroy();
@@ -734,7 +737,7 @@ export class GameScene extends Phaser.Scene {
     const lastEnd = last ? last.obs.x + last.obs.w : -Infinity;
     if (lastEnd > WORLD_WIDTH + 40 - gap) return;
     const startX = Math.max(WORLD_WIDTH + 40, lastEnd + gap);
-    const pattern = pickPattern(this.rng, speed);
+    const pattern = pickPattern(this.rng, speed, this.levelNum);
     for (const spec of pattern.obstacles) {
       const obs: Obstacle = {
         x: startX + spec.dx,
@@ -742,23 +745,49 @@ export class GameScene extends Phaser.Scene {
         h: spec.h,
         elev: spec.elev ?? 0,
         kind: spec.kind,
+        // Seeded rng: the bob phase is part of the level's fixed layout.
+        phase: spec.kind === "swing" ? this.rng.next() * Math.PI * 2 : 0,
       };
       this.obstacles.push({ obs, view: this.buildObstacleView(obs) });
     }
   }
 
   private buildObstacleView(obs: Obstacle): Phaser.GameObjects.Container {
-    const top = GROUND_Y - obs.elev - obs.h;
+    const top =
+      obs.kind === "swing"
+        ? GROUND_Y - obs.h - swingElev(obs)
+        : GROUND_Y - obs.elev - obs.h;
     const container = this.add.container(obs.x, top).setDepth(8);
     const { w, h } = obs;
     const floating = obs.elev > 0;
 
-    // Shadow falls on the ground below — smaller/fainter for floating objects.
-    const shadow = this.add
-      .image(w / 2 + 8, h + obs.elev + 7, "shadowtex")
-      .setScale(((w + 36) / 96) * (floating ? 0.7 : 1), floating ? 0.55 : 0.8)
-      .setAlpha(floating ? 0.3 : 0.55);
-    container.add(shadow);
+    // Shadow falls on the ground below — smaller/fainter for floating
+    // objects. Pits are holes, and swing mines/lasers move or glow — no
+    // cast shadow for those.
+    if (obs.kind !== "pit" && obs.kind !== "swing" && obs.kind !== "laser") {
+      const shadow = this.add
+        .image(w / 2 + 8, h + obs.elev + 7, "shadowtex")
+        .setScale(((w + 36) / 96) * (floating ? 0.7 : 1), floating ? 0.55 : 0.8)
+        .setAlpha(floating ? 0.3 : 0.55);
+      container.add(shadow);
+    }
+
+    if (obs.kind === "saw") {
+      this.drawSaw(container, w);
+      return container;
+    }
+    if (obs.kind === "pit") {
+      this.drawPit(container, w, h);
+      return container;
+    }
+    if (obs.kind === "swing") {
+      this.drawSwingMine(container, w);
+      return container;
+    }
+    if (obs.kind === "laser") {
+      this.drawLaser(container, w, h);
+      return container;
+    }
 
     const g = this.add.graphics();
     if (obs.kind === "spike" && floating) {
@@ -799,6 +828,135 @@ export class GameScene extends Phaser.Scene {
     }
     container.add(g);
     return container;
+  }
+
+  /** Spinning steel buzzsaw sitting on the ground (world 2+). */
+  private drawSaw(container: Phaser.GameObjects.Container, w: number): void {
+    const r = w / 2;
+    const g = this.add.graphics();
+    g.setPosition(r, r);
+    // Teeth around the rim, then the disc over them.
+    g.fillStyle(0x78909c, 1);
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      const b = a + 0.22;
+      g.fillTriangle(
+        Math.cos(a) * (r - 12), Math.sin(a) * (r - 12),
+        Math.cos(b) * (r - 12), Math.sin(b) * (r - 12),
+        Math.cos((a + b) / 2) * r, Math.sin((a + b) / 2) * r,
+      );
+    }
+    g.fillStyle(0xb0bec5, 1);
+    g.fillCircle(0, 0, r - 12);
+    g.fillStyle(0x546e7a, 1);
+    g.fillCircle(0, 0, r - 24);
+    // Hub bolts read as rotation once it spins.
+    g.fillStyle(0xcfd8dc, 1);
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2;
+      g.fillCircle(Math.cos(a) * (r - 18), Math.sin(a) * (r - 18), 4);
+    }
+    g.fillCircle(0, 0, 7);
+    container.add(g);
+    this.tweens.add({ targets: g, angle: 360, duration: 700, repeat: -1 });
+  }
+
+  /** Lava trench cut into the ground — lethal to touch down in (world 3+). */
+  private drawPit(container: Phaser.GameObjects.Container, w: number, h: number): void {
+    const g = this.add.graphics();
+    // Dark cut below the ground line (container top sits h above it).
+    g.fillStyle(0x140a06, 1);
+    g.fillRect(0, h, w, 150);
+    // Molten pool near the surface, brightest at the top.
+    g.fillStyle(0xbf360c, 1);
+    g.fillRect(3, h + 4, w - 6, 30);
+    g.fillStyle(0xff7043, 1);
+    g.fillRect(3, h + 4, w - 6, 10);
+    g.fillStyle(0xffab91, 0.9);
+    g.fillRect(3, h + 4, w - 6, 3);
+    // Charred lips so the edge reads against the ground tile.
+    g.fillStyle(0x000000, 0.55);
+    g.fillRect(-6, h, 9, 8);
+    g.fillRect(w - 3, h, 9, 8);
+    container.add(g);
+    // Heat shimmer rising out of the trench.
+    const glow = this.add.rectangle(w / 2, h - 2, w - 10, 10, 0xff7043, 0.35);
+    container.add(glow);
+    this.tweens.add({
+      targets: glow,
+      alpha: 0.1,
+      scaleY: 1.8,
+      duration: 520,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut",
+    });
+  }
+
+  /** Bobbing spike mine — jump it when low, run under when high (world 4+). */
+  private drawSwingMine(container: Phaser.GameObjects.Container, w: number): void {
+    const r = w / 2;
+    const g = this.add.graphics();
+    g.setPosition(r, r);
+    g.fillStyle(0xab47bc, 1);
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      g.fillTriangle(
+        Math.cos(a - 0.28) * (r - 10), Math.sin(a - 0.28) * (r - 10),
+        Math.cos(a + 0.28) * (r - 10), Math.sin(a + 0.28) * (r - 10),
+        Math.cos(a) * (r + 4), Math.sin(a) * (r + 4),
+      );
+    }
+    // Lit-from-top-left body, matching the global light direction.
+    g.fillStyle(0x8e24aa, 1);
+    g.fillCircle(0, 0, r - 8);
+    g.fillStyle(0xce93d8, 1);
+    g.fillCircle(-4, -4, r - 15);
+    g.fillStyle(0x4a148c, 1);
+    g.fillCircle(2, 2, r - 21);
+    container.add(g);
+    this.tweens.add({ targets: g, angle: 360, duration: 2600, repeat: -1 });
+    // Warning ring pulse — telegraphs "hazard" while it bobs.
+    const ring = this.add.circle(r, r, r + 8).setStrokeStyle(3, 0xce93d8, 0.5);
+    container.add(ring);
+    this.tweens.add({
+      targets: ring,
+      scale: 1.25,
+      alpha: 0.1,
+      duration: 800,
+      repeat: -1,
+      ease: "Sine.easeOut",
+    });
+  }
+
+  /** Thin, tall plasma pylon — a late, precise jump clears it (world 5+). */
+  private drawLaser(container: Phaser.GameObjects.Container, w: number, h: number): void {
+    // Beam: green plasma with a white-hot core, pulsing.
+    const beam = this.add.graphics();
+    beam.fillStyle(0x76ff03, 0.35);
+    beam.fillRect(-4, 0, w + 8, h);
+    beam.fillStyle(0x76ff03, 0.9);
+    beam.fillRect(4, 0, w - 8, h);
+    beam.fillStyle(0xf1ffdd, 1);
+    beam.fillRect(w / 2 - 2, 0, 4, h);
+    container.add(beam);
+    this.tweens.add({
+      targets: beam,
+      alpha: 0.55,
+      duration: 220,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut",
+    });
+    // Emitter base and tip orb are steady — the hitbox never blinks.
+    const g = this.add.graphics();
+    g.fillStyle(0x263238, 1);
+    g.fillRect(-10, h - 12, w + 20, 12);
+    g.fillStyle(0x455a64, 1);
+    g.fillRect(-10, h - 12, w + 20, 4);
+    g.fillStyle(0xccff90, 1);
+    g.fillCircle(w / 2, 2, 9);
+    container.add(g);
   }
 
   private bumpBestPct(pct: number): number {
