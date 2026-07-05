@@ -44,13 +44,24 @@ export interface Obstacle {
 // a level is identical — memorizable, Geometry-Dash style.
 
 export const LEVEL_SPEED_STEP = 40;
-const LEVEL_BASE_LENGTH_M = 600;
-const LEVEL_LENGTH_STEP_M = 150;
-const LEVEL_MAX_LENGTH_M = 1500;
+export const LEVELS_PER_WORLD = 5;
+const BASE_LEVEL_DURATION_SEC = 30;
+const DURATION_STEP_SEC = 15;
 
-/** Levels get longer as they get harder, up to a cap. */
+/**
+ * Level length is time-based: every world (5 levels) targets a duration —
+ * 30s for levels 1-5, then +15s per world (45s, 60s, ...).
+ */
+export function levelDurationSec(level: number): number {
+  return (
+    BASE_LEVEL_DURATION_SEC +
+    DURATION_STEP_SEC * Math.floor((Math.max(1, level) - 1) / LEVELS_PER_WORLD)
+  );
+}
+
+/** Distance derived from the target duration at this level's scroll speed. */
 export function levelLengthM(level: number): number {
-  return Math.min(LEVEL_MAX_LENGTH_M, LEVEL_BASE_LENGTH_M + (level - 1) * LEVEL_LENGTH_STEP_M);
+  return Math.round((levelSpeed(level) * levelDurationSec(level)) / 10);
 }
 
 /** Deterministic seed per level so its obstacle layout never changes. */
@@ -70,13 +81,12 @@ export function levelGapScale(level: number): number {
   return Math.max(0.75, 1.2 - 0.06 * (level - 1));
 }
 
-/** Accent color per level, cycling — the visible "new world" cue. */
-export const LEVEL_COLORS: readonly number[] = [
-  0x4dd0e1, 0x66bb6a, 0xffca28, 0xff7043, 0xab47bc, 0xef5350,
-];
+/** Accent color per WORLD (5 levels each): teal, green, orange, cycling. */
+export const LEVEL_COLORS: readonly number[] = [0x4dd0e1, 0x66bb6a, 0xff7043];
 
 export function levelColor(level: number): number {
-  return LEVEL_COLORS[(level - 1) % LEVEL_COLORS.length]!;
+  const world = Math.floor((Math.max(1, level) - 1) / LEVELS_PER_WORLD);
+  return LEVEL_COLORS[world % LEVEL_COLORS.length]!;
 }
 
 /** Horizontal distance covered during one full jump at the given speed. */

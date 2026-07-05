@@ -5,7 +5,8 @@ import type { MusicPattern } from "@mg/core";
  * style, and music track. Worlds cycle once the list is exhausted.
  */
 
-export const LEVELS_PER_WORLD = 5;
+import { LEVELS_PER_WORLD } from "./logic/runner";
+export { LEVELS_PER_WORLD } from "./logic/runner";
 
 export type SilhouetteStyle = "city" | "crystals" | "rocks";
 

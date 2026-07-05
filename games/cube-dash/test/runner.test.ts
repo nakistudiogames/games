@@ -14,6 +14,7 @@ import {
   jumpDistancePx,
   LEVEL_COLORS,
   levelColor,
+  levelDurationSec,
   levelGapScale,
   levelLengthM,
   levelSeed,
@@ -225,11 +226,19 @@ describe("floating obstacles (vertical layer)", () => {
 });
 
 describe("level system", () => {
-  it("levels get longer up to a cap", () => {
-    expect(levelLengthM(1)).toBe(600);
-    expect(levelLengthM(2)).toBe(750);
-    expect(levelLengthM(3)).toBeGreaterThan(levelLengthM(2));
-    expect(levelLengthM(50)).toBe(1500);
+  it("targets 30s for the first world, +15s per world after", () => {
+    expect(levelDurationSec(1)).toBe(30);
+    expect(levelDurationSec(5)).toBe(30);
+    expect(levelDurationSec(6)).toBe(45);
+    expect(levelDurationSec(10)).toBe(45);
+    expect(levelDurationSec(11)).toBe(60);
+  });
+
+  it("derives length from duration at the level's speed", () => {
+    expect(levelLengthM(1)).toBe(1260); // 420 px/s * 30s
+    expect(levelLengthM(2)).toBe(1380); // 460 px/s * 30s
+    expect(levelLengthM(6)).toBe(2700); // capped 600 px/s * 45s
+    expect(levelLengthM(11)).toBe(3600); // 600 px/s * 60s
   });
 
   it("level layouts are deterministic: same seed, same pattern sequence", () => {
@@ -262,10 +271,13 @@ describe("level system", () => {
     }
   });
 
-  it("cycles theme colors", () => {
-    expect(levelColor(1)).toBe(LEVEL_COLORS[0]);
-    expect(levelColor(7)).toBe(LEVEL_COLORS[0]);
-    expect(levelColor(8)).toBe(LEVEL_COLORS[1]);
+  it("shares one accent color per world: teal, green, orange, cycling", () => {
+    expect(levelColor(1)).toBe(LEVEL_COLORS[0]); // teal
+    expect(levelColor(5)).toBe(LEVEL_COLORS[0]);
+    expect(levelColor(6)).toBe(LEVEL_COLORS[1]); // green
+    expect(levelColor(10)).toBe(LEVEL_COLORS[1]);
+    expect(levelColor(11)).toBe(LEVEL_COLORS[2]); // orange
+    expect(levelColor(16)).toBe(LEVEL_COLORS[0]); // wraps with the worlds
   });
 });
 

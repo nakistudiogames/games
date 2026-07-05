@@ -54,7 +54,7 @@ interface PowerUpView {
   view: Phaser.GameObjects.Container;
 }
 
-type Phase = "ready" | "playing" | "dead" | "complete";
+type Phase = "ready" | "playing" | "paused" | "dead" | "complete";
 
 export class GameScene extends Phaser.Scene {
   private levelNum = 1;
@@ -87,6 +87,10 @@ export class GameScene extends Phaser.Scene {
   private progressFill!: Phaser.GameObjects.Rectangle;
   private readyText: Phaser.GameObjects.Text | null = null;
   private muteButton!: Phaser.GameObjects.Text;
+  private pauseButton!: Phaser.GameObjects.Text;
+  private pauseOverlay: Phaser.GameObjects.Container | null = null;
+  /** Swallows the tap that pressed RESUME so it doesn't also jump. */
+  private resumeGuardUntil = 0;
   private usedContinue = false;
   private invulnMs = 0;
   private jumpBufferMs = 0;
@@ -127,10 +131,104 @@ export class GameScene extends Phaser.Scene {
 
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
       if (this.muteButton.getBounds().contains(p.x, p.y)) return;
+      if (this.pauseButton.getBounds().contains(p.x, p.y)) return;
       this.onTap();
     });
     this.input.keyboard?.on("keydown-SPACE", () => this.onTap());
     this.input.keyboard?.on("keydown-UP", () => this.onTap());
+    this.input.keyboard?.on("keydown-ESC", () => this.togglePause());
+
+    // Auto-pause when the app is backgrounded or the window loses focus.
+    // Phaser's HIDDEN maps to visibilitychange, which Capacitor WebViews also
+    // fire on native app backgrounding — so this covers browser and mobile.
+    const autoPause = (): void => {
+      if (this.phase === "playing") this.pauseGame();
+    };
+    this.game.events.on(Phaser.Core.Events.HIDDEN, autoPause);
+    this.game.events.on(Phaser.Core.Events.BLUR, autoPause);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.game.events.off(Phaser.Core.Events.HIDDEN, autoPause);
+      this.game.events.off(Phaser.Core.Events.BLUR, autoPause);
+    });
+  }
+
+  private togglePause(): void {
+    if (this.phase === "playing") this.pauseGame();
+    else if (this.phase === "paused") this.resumeGame();
+  }
+
+  private pauseGame(): void {
+    this.phase = "paused";
+    this.trail.emitting = false;
+    stopAllMusic();
+
+    const { width, height } = this.scale;
+    const overlay = this.add.container(0, 0).setDepth(100);
+    overlay.add(this.add.rectangle(0, 0, width, height, 0x000000, 0.7).setOrigin(0).setInteractive());
+    overlay.add(
+      this.add
+        .text(width / 2, height * 0.3, "PAUSED", {
+          fontFamily: "Arial Black, sans-serif",
+          fontSize: "80px",
+          color: "#ffffff",
+        })
+        .setOrigin(0.5)
+        .setShadow(0, 8, "#000000", 10, false, true),
+    );
+    overlay.add(
+      this.add
+        .text(width / 2, height * 0.4, `Level ${this.levelNum}  ·  ${this.progressPct()}%`, {
+          fontFamily: "Arial, sans-serif",
+          fontSize: "40px",
+          color: "#ffd54f",
+        })
+        .setOrigin(0.5),
+    );
+    overlay.add(
+      textButton(
+        this,
+        width / 2,
+        height * 0.53,
+        "▶  RESUME",
+        { text: "#a5d6a7", background: "#1e3320" },
+        () => this.resumeGame(),
+      ),
+    );
+    overlay.add(
+      textButton(
+        this,
+        width / 2,
+        height * 0.63,
+        "↻  RESTART LEVEL",
+        { text: "#ffd54f", background: "#332e1a" },
+        () => this.scene.restart({ level: this.levelNum }),
+        "44px",
+      ),
+    );
+    overlay.add(
+      textButton(
+        this,
+        width / 2,
+        height * 0.73,
+        "☰  MENU",
+        { text: "#90caf9", background: "#16283d" },
+        () => {
+          stopAllMusic();
+          this.scene.start("menu");
+        },
+        "44px",
+      ),
+    );
+    this.pauseOverlay = overlay;
+  }
+
+  private resumeGame(): void {
+    this.pauseOverlay?.destroy();
+    this.pauseOverlay = null;
+    this.phase = "playing";
+    this.resumeGuardUntil = this.time.now + 200;
+    this.trail.emitting = true;
+    if (!storage.get("musicMuted", false)) this.bgm.start();
   }
 
   private remainingPx(): number {
@@ -386,7 +484,7 @@ export class GameScene extends Phaser.Scene {
       .setDepth(21);
 
     this.powerBadge = this.add
-      .text(40, 70, "", {
+      .text(40, 145, "", {
         fontFamily: "Arial Black, sans-serif",
         fontSize: "38px",
         color: "#ffd54f",
@@ -395,9 +493,16 @@ export class GameScene extends Phaser.Scene {
       .setDepth(20);
     this.powerBadge.setShadow(0, 5, "#000000", 6, false, true);
 
+    this.pauseButton = this.add
+      .text(668, 70, "⏸", { fontSize: "48px" })
+      .setOrigin(0.5)
+      .setDepth(20)
+      .setInteractive({ useHandCursor: true });
+    this.pauseButton.on("pointerdown", () => this.togglePause());
+
     const muted = storage.get("musicMuted", false);
     this.muteButton = this.add
-      .text(660, 70, muted ? "🔇" : "🔊", { fontSize: "48px" })
+      .text(52, 70, muted ? "🔇" : "🔊", { fontSize: "48px" })
       .setOrigin(0.5)
       .setDepth(20)
       .setInteractive({ useHandCursor: true });
@@ -437,6 +542,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (this.phase !== "playing") return;
+    if (this.time.now < this.resumeGuardUntil) return;
     const kind = tryJump(this.runner, this.doubleJumpMs > 0);
     if (kind === "ground") {
       sfx.place();
@@ -704,6 +810,9 @@ export class GameScene extends Phaser.Scene {
 
   private completeLevel(): void {
     this.phase = "complete";
+    // Crossing the finish counts as the full level, not the floor()ed 99%.
+    this.scoreText.setText("100%");
+    this.progressFill.setScale(1, 1);
     this.trail.emitting = false;
     this.bumpBestPct(100);
     const unlocked = storage.get("unlockedLevel", 1);

@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { GameStorage } from "@mg/core";
 import { textButton } from "@mg/ui";
-import { levelColor, levelLengthM, levelSpeed } from "../logic/runner";
+import { levelColor, levelDurationSec } from "../logic/runner";
 import { worldForLevel } from "../worlds";
 import { CHARACTERS, characterById, isCharacterUnlocked } from "../characters";
 import { attachAura, buildCharacterParts } from "../characterView";
@@ -275,7 +275,7 @@ export class MenuScene extends Phaser.Scene {
     const best = storage.get(`bestPct:${this.selected}`, 0);
     const cleared = best >= 100;
     this.levelInfo.setText(
-      `${worldForLevel(this.selected).name}  ·  ${levelLengthM(this.selected)}m` +
+      `${worldForLevel(this.selected).name}  ·  ${levelDurationSec(this.selected)}s` +
         (best > 0 ? `  ·  ${cleared ? "✓ cleared" : `best ${best}%`}` : ""),
     );
     this.lockHint.setText(

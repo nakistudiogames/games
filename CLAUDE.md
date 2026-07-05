@@ -74,10 +74,18 @@ games/cube-dash    Game #5, browser-playable. Geometry-Dash-style auto-runner
                    per world (sil-<id>, ground-<id>); music.ts caches one
                    MusicPlayer per world (musicForLevel/stopAllMusic). HUD
                    run timer next to the % (elapsed active-play time, shown
-                   on the complete screen too). Level system (GD-style
+                   on the complete screen too). Pause: ESC or ⏸ HUD button →
+                   overlay w/ resume/restart/menu; auto-pauses on Phaser
+                   HIDDEN/BLUR (covers Capacitor app-backgrounding via
+                   visibilitychange); 200ms resume guard swallows the RESUME
+                   tap so it doesn't double as a jump. Menu: tap level number
+                   or ⊞ → paginated level-select grid (5x4/page, ✓/best-%,
+                   locked 🔒 tiles). Level system (GD-style
                    discrete levels): select in menu (◀ ▶), each level is a
-                   fixed run (600m + 150m/level, cap 1500m) ending at a
-                   checkered finish line; clearing unlocks the next. Layouts
+                   fixed run ending at a checkered finish line; clearing
+                   unlocks the next. Length is TIME-based (levelDurationSec):
+                   world 1 = 30s, +15s per world, distance = duration ×
+                   levelSpeed. Layouts
                    are SEEDED per level (levelSeed = n*7919) so every attempt
                    is identical/memorizable. Speed +40/level (base 420 cap
                    600 → spike3 from level 4), gaps ×levelGapScale (1.2→0.75,
@@ -123,7 +131,7 @@ npm run dev:2048   # merge-2048 on Vite dev server
 npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
-npm test           # vitest (15 + 12 + 9 + 8 + 37 = 81 tests, all green)
+npm test           # vitest (15 + 12 + 9 + 8 + 38 = 82 tests, all green)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)
 ```
