@@ -1,13 +1,15 @@
 import Phaser from "phaser";
-import { GameStorage } from "@mg/core";
+import { GameStorage, sfx } from "@mg/core";
 import { textButton } from "@mg/ui";
-import { KIND_UNLOCK_LEVEL, LEVELS_PER_WORLD, levelColor, levelDurationSec } from "../logic/runner";
+import { KIND_UNLOCK_LEVEL, LEVELS_PER_WORLD, isFinaleLevel, levelColor, levelDurationSec } from "../logic/runner";
 import type { ObstacleKind } from "../logic/runner";
 import { worldForLevel } from "../worlds";
 import { CHARACTERS, characterById, isCharacterUnlocked } from "../characters";
 import { attachAura, buildCharacterParts } from "../characterView";
 import { OBSTACLE_INFO } from "../obstacles";
 import { OBSTACLE_PREVIEW, buildObstaclePreview } from "../obstacleView";
+import { ACHIEVEMENTS, isEarned } from "../achievements";
+import { ensureWorldTextures } from "../worldView";
 
 export const storage = new GameStorage("cube-dash");
 
@@ -38,6 +40,8 @@ export class MenuScene extends Phaser.Scene {
   private charIndex = 0;
   private charPreview: Phaser.GameObjects.Container | null = null;
   private charName!: Phaser.GameObjects.Text;
+  private attract: Phaser.GameObjects.Container | null = null;
+  private attractWorldId = "";
 
   constructor() {
     super("menu");
@@ -53,19 +57,12 @@ export class MenuScene extends Phaser.Scene {
     const unlocked = this.unlockedLevel();
     this.selected = Math.min(storage.get("lastPlayed", 1), unlocked);
 
-    // Refined backdrop: subtle vertical gradient plus a faint static
-    // starfield instead of a flat fill.
-    const bg = this.add.graphics();
-    bg.fillGradientStyle(0x1a2138, 0x1a2138, 0x0b0e18, 0x0b0e18, 1);
-    bg.fillRect(0, 0, width, height);
-    const stars = this.add.graphics();
-    for (let i = 0; i < 42; i++) {
-      // Cheap deterministic scatter — no rng needed for set dressing.
-      const sx = (i * 131 + 37) % width;
-      const sy = (i * 337 + 91) % height;
-      stars.fillStyle(0xffffff, 0.05 + ((i * 53) % 20) / 200);
-      stars.fillRect(sx, sy, 2 + (i % 2), 2 + (i % 2));
-    }
+    // Attract-mode backdrop: the selected level's world, with a demo cube
+    // running along the bottom. Rebuilt whenever the selected world changes.
+    this.attract = null;
+    this.attractWorldId = "";
+    this.buildAttract();
+    sfx.setMuted(storage.get("sfxMuted", false));
 
     // Obstacle encyclopedia — every hazard met so far, plus teasers ahead.
     textButton(
@@ -75,6 +72,38 @@ export class MenuScene extends Phaser.Scene {
       "📖 GUIDE",
       { text: "#8a93a8", background: "#181d2b" },
       () => this.openEncyclopedia(),
+      "26px",
+    );
+    textButton(
+      this,
+      262,
+      56,
+      "🏆",
+      { text: "#8a93a8", background: "#181d2b" },
+      () => this.openTrophies(),
+      "26px",
+    );
+    textButton(
+      this,
+      356,
+      56,
+      "📊",
+      { text: "#8a93a8", background: "#181d2b" },
+      () => this.openStats(),
+      "26px",
+    );
+    const sfxMuted = storage.get("sfxMuted", false);
+    textButton(
+      this,
+      width - 120,
+      130,
+      sfxMuted ? "🔇 SFX" : "🔊 SFX",
+      { text: sfxMuted ? "#5c667d" : "#8a93a8", background: "#181d2b" },
+      () => {
+        storage.set("sfxMuted", !sfxMuted);
+        sfx.setMuted(!sfxMuted);
+        this.scene.restart(); // re-renders the toggle label
+      },
       "26px",
     );
 
@@ -223,6 +252,7 @@ export class MenuScene extends Phaser.Scene {
       this.charName.setText(spec.name).setColor(hex);
       // Browsing an unlocked character selects it immediately.
       storage.set("character", spec.id);
+      this.buildAttract(); // demo runner wears the newly picked skin
     } else {
       this.charName
         .setText(`🔒 ${spec.name} — clear level ${spec.minLevel - 1}`)
@@ -461,8 +491,181 @@ export class MenuScene extends Phaser.Scene {
     renderPage();
   }
 
+  /** World-themed backdrop with a slow parallax skyline and a demo runner. */
+  private buildAttract(): void {
+    const { width, height } = this.scale;
+    const world = worldForLevel(this.selected);
+    this.attractWorldId = world.id;
+    this.attract?.destroy();
+    const c = this.add.container(0, 0).setDepth(-10);
+    this.attract = c;
+    ensureWorldTextures(this, world);
+
+    const sky = this.add.graphics();
+    sky.fillGradientStyle(world.skyTop, world.skyTop, world.skyBottomA, world.skyBottomB, 1);
+    sky.fillRect(0, 0, width, height);
+    const stars = this.add.graphics();
+    for (let i = 0; i < 42; i++) {
+      // Cheap deterministic scatter — no rng needed for set dressing.
+      const sx = (i * 131 + 37) % width;
+      const sy = (i * 337 + 91) % height;
+      stars.fillStyle(0xffffff, 0.05 + ((i * 53) % 20) / 200);
+      stars.fillRect(sx, sy, 2 + (i % 2), 2 + (i % 2));
+    }
+    c.add([sky, stars]);
+
+    const sil = this.add
+      .tileSprite(0, height - 346, width, 320, `sil-${world.id}`)
+      .setOrigin(0)
+      .setAlpha(0.3);
+    c.add(sil);
+    this.tweens.add({ targets: sil, tilePositionX: 400, duration: 18000, repeat: -1 });
+    const haze = this.add.graphics();
+    haze.fillGradientStyle(world.haze, world.haze, world.haze, world.haze, 0, 0, 0.4, 0.4);
+    haze.fillRect(0, height - 346, width, 320);
+    c.add(haze);
+
+    // Demo runner hopping along the very bottom edge.
+    const groundY = height - 26;
+    c.add(this.add.rectangle(0, groundY, width, 26, world.groundBase).setOrigin(0));
+    c.add(
+      this.add.rectangle(0, groundY - 3, width, 3, levelColor(this.selected)).setOrigin(0).setAlpha(0.6),
+    );
+    const spec = characterById(storage.get("character", "dash"));
+    const cube = this.add.container(width * 0.22, groundY - 22, buildCharacterParts(this, spec, 44));
+    cube.setScale(0.85);
+    c.add(cube);
+    this.tweens.add({
+      targets: cube,
+      y: groundY - 140,
+      duration: 380,
+      yoyo: true,
+      repeat: -1,
+      ease: "Quad.easeOut",
+      delay: 400,
+      repeatDelay: 950,
+    });
+    this.tweens.add({
+      targets: cube,
+      angle: 360,
+      duration: 760,
+      repeat: -1,
+      delay: 400,
+      repeatDelay: 950,
+    });
+  }
+
+  /** Full-screen overlay scaffold shared by the trophy and stats pages. */
+  private buildOverlay(title: string): Phaser.GameObjects.Container {
+    const { width, height } = this.scale;
+    const overlay = this.add.container(0, 0).setDepth(100);
+    overlay.add(
+      this.add.rectangle(0, 0, width, height, 0x0b0e18, 0.95).setOrigin(0).setInteractive(),
+    );
+    overlay.add(
+      this.add
+        .text(width / 2, 150, title, {
+          fontFamily: "Arial Black, sans-serif",
+          fontSize: "52px",
+          color: "#ffffff",
+        })
+        .setOrigin(0.5)
+        .setShadow(0, 6, "#000000", 8, false, true),
+    );
+    overlay.add(
+      textButton(
+        this,
+        width / 2,
+        height - 80,
+        "✕  CLOSE",
+        { text: "#ef9a9a", background: "#331e1e" },
+        () => overlay.destroy(),
+        "34px",
+      ),
+    );
+    return overlay;
+  }
+
+  private openTrophies(): void {
+    const { width } = this.scale;
+    const overlay = this.buildOverlay("TROPHIES");
+    const earnedCount = ACHIEVEMENTS.filter((a) => isEarned(storage, a.id)).length;
+    overlay.add(
+      this.add
+        .text(width / 2, 210, `${earnedCount} / ${ACHIEVEMENTS.length} earned`, {
+          fontFamily: "Arial, sans-serif",
+          fontSize: "28px",
+          color: "#8a93a8",
+        })
+        .setOrigin(0.5),
+    );
+    ACHIEVEMENTS.forEach((a, i) => {
+      const y = 300 + i * 66;
+      const earned = isEarned(storage, a.id);
+      overlay.add(
+        this.add
+          .text(90, y, earned ? "🏆" : "🔒", { fontSize: "30px" })
+          .setOrigin(0.5),
+      );
+      overlay.add(
+        this.add.text(130, y - 16, a.name, {
+          fontFamily: "Arial Black, sans-serif",
+          fontSize: "26px",
+          color: earned ? "#ffd54f" : "#5c667d",
+        }),
+      );
+      overlay.add(
+        this.add.text(130, y + 12, a.desc, {
+          fontFamily: "Arial, sans-serif",
+          fontSize: "21px",
+          color: earned ? "#aab3c7" : "#4a5266",
+        }),
+      );
+    });
+  }
+
+  private openStats(): void {
+    const { width } = this.scale;
+    const overlay = this.buildOverlay("STATS");
+    const playMs = storage.get("totalPlayMs", 0);
+    const hours = Math.floor(playMs / 3_600_000);
+    const mins = Math.floor((playMs % 3_600_000) / 60_000);
+    let cleared = 0;
+    for (let lvl = 1; lvl <= 100; lvl++) {
+      if (storage.get(`bestPct:${lvl}`, 0) >= 100) cleared++;
+    }
+    const rows: Array<[string, string]> = [
+      ["Levels cleared", `${cleared}`],
+      ["Total attempts", `${storage.get("totalAttempts", 0)}`],
+      ["Total crashes", `${storage.get("totalDeaths", 0)}`],
+      ["Distance run", `${storage.get("totalMeters", 0).toLocaleString()}m`],
+      ["Near-misses", `${storage.get("nearMisses", 0)}`],
+      ["Play time", `${hours}h ${mins}m`],
+      ["Trophies", `${ACHIEVEMENTS.filter((a) => isEarned(storage, a.id)).length} / ${ACHIEVEMENTS.length}`],
+    ];
+    rows.forEach(([label, value], i) => {
+      const y = 330 + i * 92;
+      overlay.add(
+        this.add.text(110, y, label, {
+          fontFamily: "Arial, sans-serif",
+          fontSize: "34px",
+          color: "#8a93a8",
+        }).setOrigin(0, 0.5),
+      );
+      overlay.add(
+        this.add.text(width - 110, y, value, {
+          fontFamily: "Arial Black, sans-serif",
+          fontSize: "36px",
+          color: "#ffffff",
+        }).setOrigin(1, 0.5),
+      );
+    });
+  }
+
   private refresh(): void {
     const unlocked = this.unlockedLevel();
+    // Backdrop follows the selected level's world.
+    if (worldForLevel(this.selected).id !== this.attractWorldId) this.buildAttract();
     const hex = `#${levelColor(this.selected).toString(16).padStart(6, "0")}`;
     this.levelWord.setColor(hex);
     this.levelLabel.setText(`${this.selected}`).setColor(hex);
@@ -471,6 +674,7 @@ export class MenuScene extends Phaser.Scene {
     const cleared = best >= 100;
     this.levelInfo.setText(
       `${worldForLevel(this.selected).name}  ·  ${levelDurationSec(this.selected)}s` +
+        (isFinaleLevel(this.selected) ? "  ·  ★ FINALE" : "") +
         (best > 0 ? `  ·  ${cleared ? "✓ cleared" : `best ${best}%`}` : ""),
     );
     this.lockHint.setText(

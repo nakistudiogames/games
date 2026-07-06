@@ -7,6 +7,7 @@ export function floatBanner(
   y: number,
   fontSize = "72px",
   color = "#ffd54f",
+  depth = 50,
 ): void {
   const banner = scene.add
     .text(scene.scale.width / 2, y, message, {
@@ -21,7 +22,7 @@ export function floatBanner(
     })
     .setOrigin(0.5)
     .setScale(0.3)
-    .setDepth(50);
+    .setDepth(depth);
   banner.setShadow(0, 8, "#000000", 10, false, true);
   scene.tweens.add({
     targets: banner,

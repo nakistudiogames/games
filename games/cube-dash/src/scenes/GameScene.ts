@@ -1,11 +1,15 @@
 import Phaser from "phaser";
-import { Rng, sfx } from "@mg/core";
+import { Rng, haptics, sfx } from "@mg/core";
 import type { MusicPlayer } from "@mg/core";
 import { floatBanner, textButton } from "@mg/ui";
 import {
+  DASH_LENGTH_PX,
+  DASH_MUL,
   GROUND_Y,
   KINDS_WITH_PHASE,
   MIRROR_MIN_LEVEL,
+  PAD_JUMP_VELOCITY,
+  SLOWMO_MUL,
   PLAYER_SIZE,
   PLAYER_X,
   POWER_UPS,
@@ -17,14 +21,17 @@ import {
   droneShift,
   gearShift,
   geyserActive,
+  isFinaleLevel,
   jump,
   levelColor,
+  levelDurationSec,
   levelGapScale,
   levelLengthM,
   levelSeed,
   levelSpeed,
   makePowerUp,
   minGapPx,
+  nearMiss,
   phantomSolid,
   pickPattern,
   powerUpGapPx,
@@ -34,6 +41,7 @@ import {
   swingElev,
   talonActive,
   tentacleSway,
+  trackBoosts,
   trackZones,
   tryJump,
   vineHeight,
@@ -44,14 +52,17 @@ import type {
   ObstacleKind,
   PowerUp,
   Runner,
+  TrackBoost,
   TrackZone,
   TrackZoneKind,
 } from "../logic/runner";
 import { adsReady } from "../ads";
+import { newlyEarned } from "../achievements";
 import { characterById } from "../characters";
 import { attachAura, buildCharacterParts } from "../characterView";
 import { musicForLevel, stopAllMusic } from "../music";
 import { drawObstacle } from "../obstacleView";
+import { ensureWorldTextures } from "../worldView";
 import { worldForLevel } from "../worlds";
 import type { WorldTheme } from "../worlds";
 import { godModeOn, storage } from "./MenuScene";
@@ -74,6 +85,10 @@ const ZONE_COLORS: Record<TrackZoneKind, number> = { mirror: 0xeceff1, flip: 0xb
 interface ObstacleView {
   obs: Obstacle;
   view: Phaser.GameObjects.Container;
+  /** Player entered this obstacle's graze band without dying. */
+  grazed?: boolean;
+  /** Near-miss celebration already paid out for this obstacle. */
+  rewarded?: boolean;
 }
 
 interface PowerUpView {
@@ -114,6 +129,17 @@ export class GameScene extends Phaser.Scene {
   private zones: TrackZone[] = [];
   private activeZone: TrackZoneKind | null = null;
   private zoneGates: Array<{ at: number; view: Phaser.GameObjects.Container }> = [];
+  private attemptText: Phaser.GameObjects.Text | null = null;
+  private squashTween: Phaser.Tweens.Tween | null = null;
+  private shieldMs = 0;
+  private slowmoMs = 0;
+  private shieldRing!: Phaser.GameObjects.Arc;
+  private boosts: Array<{ b: TrackBoost; view: Phaser.GameObjects.Container; used: boolean }> = [];
+  /** Dash-strip effect runs until distancePx crosses this. */
+  private dashUntilPx = -1;
+  /** Buttons on the death overlay — taps anywhere else instantly retry. */
+  private deadButtons: Phaser.GameObjects.Container[] = [];
+  private retryReadyAt = 0;
   private rng!: Rng;
   private phase: Phase = "ready";
   private distancePx = 0;
@@ -165,6 +191,22 @@ export class GameScene extends Phaser.Scene {
     this.activeZone = null;
     this.zoneGates = [];
 
+    this.deadButtons = [];
+    this.retryReadyAt = 0;
+    this.squashTween = null;
+    this.shieldMs = 0;
+    this.slowmoMs = 0;
+    this.boosts = [];
+    this.dashUntilPx = -1;
+
+    sfx.setMuted(storage.get("sfxMuted", false));
+    haptics.setEnabled(!storage.get("hapticsOff", false));
+
+    // Attempt bookkeeping (GD-style): every run of a level counts.
+    const attempts = storage.get(`attempts:${this.levelNum}`, 0) + 1;
+    storage.set(`attempts:${this.levelNum}`, attempts);
+    storage.set("totalAttempts", storage.get("totalAttempts", 0) + 1);
+
     this.ensureTextures();
     // The track layer sits above the scenery (depths 0-3) and below the HUD
     // (20+); children render in add order, so build order = draw order.
@@ -172,14 +214,34 @@ export class GameScene extends Phaser.Scene {
     this.buildBackground();
     this.buildPlayer();
     this.buildZoneGates();
+    this.buildBoosts();
     this.buildHud();
 
+    // "ATTEMPT N" tag sits on the track and scrolls away with it.
+    this.attemptText = this.add
+      .text(WORLD_WIDTH * 0.62, GROUND_Y - 320, `ATTEMPT ${attempts}`, {
+        fontFamily: "Arial Black, sans-serif",
+        fontSize: "56px",
+        color: this.levelColorHex(this.levelNum),
+      })
+      .setOrigin(0.5)
+      .setAlpha(0.85)
+      .setShadow(0, 5, "#000000", 6, false, true);
+    this.trackObjects.add(this.attemptText);
+
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
+      if (this.phase === "dead") {
+        this.tryInstantRetry(p);
+        return;
+      }
       if (this.muteButton.getBounds().contains(p.x, p.y)) return;
       if (this.pauseButton.getBounds().contains(p.x, p.y)) return;
       this.onTap();
     });
-    this.input.keyboard?.on("keydown-SPACE", () => this.onTap());
+    this.input.keyboard?.on("keydown-SPACE", () => {
+      if (this.phase === "dead") this.tryInstantRetry(null);
+      else this.onTap();
+    });
     this.input.keyboard?.on("keydown-UP", () => this.onTap());
     this.input.keyboard?.on("keydown-ESC", () => this.togglePause());
 
@@ -200,6 +262,26 @@ export class GameScene extends Phaser.Scene {
   private togglePause(): void {
     if (this.phase === "playing") this.pauseGame();
     else if (this.phase === "paused") this.resumeGame();
+  }
+
+  /** Tap anywhere (but a button) on the death screen = instant restart. */
+  private tryInstantRetry(p: Phaser.Input.Pointer | null): void {
+    if (this.time.now < this.retryReadyAt) return; // swallow the death-mash
+    if (p && this.deadButtons.some((b) => b.getBounds().contains(p.x, p.y))) return;
+    this.scene.restart({ level: this.levelNum });
+  }
+
+  /** Squash/stretch punch on the player body; resolves back to 1:1. */
+  private punchScale(sx: number, sy: number): void {
+    this.squashTween?.stop();
+    this.playerView.setScale(sx, sy);
+    this.squashTween = this.tweens.add({
+      targets: this.playerView,
+      scaleX: 1,
+      scaleY: 1,
+      duration: 130,
+      ease: "Back.easeOut",
+    });
   }
 
   private pauseGame(): void {
@@ -264,6 +346,24 @@ export class GameScene extends Phaser.Scene {
         "44px",
       ),
     );
+    const sfxMuted = storage.get("sfxMuted", false);
+    overlay.add(
+      textButton(
+        this,
+        width / 2,
+        height * 0.83,
+        sfxMuted ? "🔇  SFX OFF" : "🔊  SFX ON",
+        { text: sfxMuted ? "#5c667d" : "#8a93a8", background: "#181d2b" },
+        () => {
+          storage.set("sfxMuted", !sfxMuted);
+          sfx.setMuted(!sfxMuted);
+          // Rebuild the overlay so the label reflects the new state.
+          this.pauseOverlay?.destroy();
+          this.pauseGame();
+        },
+        "36px",
+      ),
+    );
     this.pauseOverlay = overlay;
   }
 
@@ -310,246 +410,7 @@ export class GameScene extends Phaser.Scene {
       g.generateTexture("stars", 160, 160);
       g.destroy();
     }
-    // World-specific silhouette (city buildings / crystal shards / rocks).
-    const silKey = `sil-${this.world.id}`;
-    if (!this.textures.exists(silKey)) {
-      const g = this.make.graphics({ x: 0, y: 0 }, false);
-      if (this.world.silhouette === "city") {
-        const buildings: Array<[number, number, number]> = [
-          [0, 70, 190], [80, 60, 260], [150, 90, 140], [250, 70, 300], [330, 55, 210],
-        ];
-        for (const [x, w, h] of buildings) {
-          g.fillStyle(this.world.silDark, 1);
-          g.fillRect(x, 320 - h, w, h);
-          g.fillStyle(this.world.silLight, 1);
-          g.fillRect(x, 320 - h, w, 6);
-        }
-      } else if (this.world.silhouette === "crystals") {
-        const shards: Array<[number, number, number]> = [
-          [0, 70, 220], [50, 50, 300], [110, 80, 170], [180, 55, 260], [240, 90, 200],
-          [310, 60, 310], [360, 50, 150],
-        ];
-        for (const [x, w, h] of shards) {
-          g.fillStyle(this.world.silDark, 1);
-          g.fillTriangle(x, 320, x + w / 2, 320 - h, x + w, 320);
-          g.fillStyle(this.world.silLight, 0.8);
-          g.fillTriangle(x + w / 2, 320 - h, x + w / 2 + 8, 320 - h + 40, x + w / 2 - 8, 320 - h + 40);
-        }
-      } else if (this.world.silhouette === "peaks") {
-        const peaks: Array<[number, number, number]> = [
-          [0, 130, 230], [90, 150, 300], [210, 120, 200], [280, 140, 280], [370, 90, 170],
-        ];
-        for (const [x, w, h] of peaks) {
-          g.fillStyle(this.world.silDark, 1);
-          g.fillTriangle(x, 320, x + w * 0.5, 320 - h, x + w, 320);
-          // Snow cap hugging the summit.
-          g.fillStyle(this.world.silLight, 0.9);
-          g.fillTriangle(x + w * 0.5, 320 - h, x + w * 0.62, 320 - h * 0.82, x + w * 0.38, 320 - h * 0.82);
-        }
-      } else if (this.world.silhouette === "mushrooms") {
-        const shrooms: Array<[number, number, number]> = [
-          [10, 90, 180], [110, 130, 260], [230, 80, 150], [290, 120, 230],
-        ];
-        for (const [x, capW, h] of shrooms) {
-          const cx = x + capW / 2;
-          g.fillStyle(this.world.silDark, 1);
-          g.fillRect(cx - capW * 0.175, 320 - h, capW * 0.35, h); // stalk
-          g.fillEllipse(cx, 320 - h, capW, capW * 0.55); // cap
-          g.fillStyle(this.world.silLight, 0.8);
-          g.fillEllipse(cx, 320 - h - capW * 0.08, capW * 0.6, capW * 0.2);
-        }
-      } else if (this.world.silhouette === "ruins") {
-        const ruins: Array<[number, number]> = [
-          [0, 150], [140, 200], [320, 130],
-        ];
-        const tierH = 46;
-        for (const [x, baseW] of ruins) {
-          const tiers = Math.round(baseW / 44);
-          for (let t = 0; t < tiers; t++) {
-            const w = baseW * (1 - t * 0.18);
-            const cx = x + baseW / 2;
-            g.fillStyle(this.world.silDark, 1);
-            g.fillRect(cx - w / 2, 320 - tierH * (t + 1), w, tierH);
-            g.fillStyle(this.world.silLight, 0.7);
-            g.fillRect(cx - w / 2, 320 - tierH * (t + 1), w, 4);
-          }
-        }
-      } else if (this.world.silhouette === "tendrils") {
-        const tendrils: Array<[number, number, number, number]> = [
-          [10, 34, 240, 40], [80, 26, 300, -30], [150, 40, 200, 25], [230, 30, 310, -45],
-          [300, 36, 250, 35], [365, 24, 180, -20],
-        ];
-        for (const [x, w, h, lean] of tendrils) {
-          g.fillStyle(this.world.silDark, 1);
-          g.fillTriangle(x, 320, x + w / 2 + lean, 320 - h, x + w, 320);
-          g.fillStyle(this.world.silLight, 0.5);
-          g.fillTriangle(x + w * 0.3, 320, x + w / 2 + lean, 320 - h * 0.9, x + w * 0.55, 320);
-        }
-      } else if (this.world.silhouette === "spires") {
-        const spires: Array<[number, number, number]> = [
-          [10, 44, 210], [80, 60, 250], [170, 40, 170], [230, 70, 240], [330, 50, 220],
-        ];
-        for (const [x, w, h] of spires) {
-          g.fillStyle(this.world.silDark, 1);
-          g.fillRect(x, 320 - h, w, h);
-          g.fillTriangle(x, 320 - h, x + w / 2, 320 - h - w, x + w, 320 - h); // pointed tip
-          g.fillStyle(this.world.silLight, 0.8);
-          g.fillRect(x + w / 2 - 2, 320 - h, 4, h); // lit spine
-        }
-      } else if (this.world.silhouette === "arches") {
-        for (const [x, w, h] of [[0, 130, 200], [130, 150, 260], [290, 120, 180]] as const) {
-          g.fillStyle(this.world.silDark, 1);
-          g.fillRect(x, 320 - h, w, h);
-          // Carved opening: a lighter arch reads as sky through the monument.
-          g.fillStyle(this.world.silLight, 0.35);
-          g.fillRect(x + w * 0.3, 320 - h * 0.62, w * 0.4, h * 0.62);
-          g.fillEllipse(x + w / 2, 320 - h * 0.62, w * 0.4, h * 0.3);
-          g.fillStyle(this.world.silLight, 0.9);
-          g.fillRect(x, 320 - h, w, 5);
-        }
-      } else if (this.world.silhouette === "pines") {
-        for (const [x, w, h] of [[0, 80, 180], [70, 110, 280], [180, 90, 220], [270, 120, 300], [380, 70, 160]] as const) {
-          g.fillStyle(this.world.silDark, 1);
-          for (let t = 0; t < 3; t++) {
-            const tw = w * (1 - t * 0.25);
-            const ty = 320 - (h / 3) * (t + 1);
-            g.fillTriangle(x + (w - tw) / 2, 320 - (h / 3) * t, x + w - (w - tw) / 2, 320 - (h / 3) * t, x + w / 2, ty);
-          }
-          g.fillStyle(this.world.silLight, 0.7);
-          g.fillTriangle(x + w * 0.35, 320 - h * 0.66, x + w / 2, 320 - h, x + w / 2, 320 - h * 0.66);
-        }
-      } else if (this.world.silhouette === "stacks") {
-        for (const [x, w, h] of [[10, 60, 240], [110, 80, 180], [220, 55, 290], [320, 70, 210]] as const) {
-          g.fillStyle(this.world.silDark, 1);
-          g.fillRect(x, 320 - h, w, h);
-          g.fillRect(x - 8, 320 - h, w + 16, 14); // crown lip
-          g.fillStyle(this.world.silLight, 0.8);
-          g.fillRect(x, 320 - h, 6, h);
-          // Smoke plume drifting off the stack.
-          g.fillStyle(this.world.silLight, 0.3);
-          g.fillEllipse(x + w / 2 + 18, 320 - h - 18, 46, 22);
-          g.fillEllipse(x + w / 2 + 44, 320 - h - 34, 30, 16);
-        }
-      } else if (this.world.silhouette === "thunderheads") {
-        for (const [x, y, s] of [[30, 240, 60], [140, 190, 80], [280, 230, 70], [370, 180, 50]] as const) {
-          g.fillStyle(this.world.silDark, 1);
-          g.fillEllipse(x, y, s * 2.4, s);
-          g.fillEllipse(x + s, y - s * 0.5, s * 1.8, s * 0.9);
-          g.fillStyle(this.world.silLight, 0.6);
-          g.fillEllipse(x - s * 0.4, y - s * 0.36, s, s * 0.4);
-          // Lightning drops to the horizon.
-          g.lineStyle(3, this.world.silLight, 0.8);
-          g.beginPath();
-          g.moveTo(x + s * 0.4, y + s * 0.4);
-          g.lineTo(x + s * 0.2, y + s * 0.9);
-          g.lineTo(x + s * 0.5, y + s * 1.1);
-          g.strokePath();
-        }
-      } else if (this.world.silhouette === "citadel") {
-        for (const [x, w, h] of [[20, 90, 230], [140, 130, 300], [300, 90, 250]] as const) {
-          g.fillStyle(this.world.silDark, 1);
-          g.fillRect(x, 320 - h, w, h);
-          // Battlements + a spire — and mirrored towers hanging above, the
-          // inverted-citadel motif.
-          for (let bx = x; bx + 14 <= x + w; bx += 22) g.fillRect(bx, 320 - h - 10, 14, 10);
-          g.fillTriangle(x + w / 2 - 12, 320 - h - 10, x + w / 2 + 12, 320 - h - 10, x + w / 2, 320 - h - 52);
-          g.fillStyle(this.world.silLight, 0.35);
-          g.fillRect(x + w * 0.18, 20, w * 0.64, 34);
-          g.fillTriangle(x + w / 2 - 10, 54, x + w / 2 + 10, 54, x + w / 2, 86);
-          g.fillStyle(this.world.silLight, 0.9);
-          g.fillRect(x, 320 - h, w, 5);
-        }
-      } else if (this.world.silhouette === "coral") {
-        for (const [x, w, h] of [[10, 70, 180], [100, 90, 260], [210, 60, 150], [290, 100, 230], [390, 40, 120]] as const) {
-          g.fillStyle(this.world.silDark, 1);
-          // Branching coral: a trunk with two forks.
-          g.fillRect(x + w / 2 - 8, 320 - h * 0.55, 16, h * 0.55);
-          g.fillTriangle(x + w / 2, 320 - h * 0.5, x, 320 - h, x + 26, 320 - h);
-          g.fillTriangle(x + w / 2, 320 - h * 0.55, x + w, 320 - h * 0.9, x + w - 24, 320 - h * 0.86);
-          g.fillStyle(this.world.silLight, 0.7);
-          g.fillCircle(x + 13, 320 - h - 4, 7);
-          g.fillCircle(x + w - 12, 320 - h * 0.9 - 4, 6);
-        }
-      } else if (this.world.silhouette === "ribs") {
-        // A colossal ribcage arcing over the horizon.
-        for (let i = 0; i < 6; i++) {
-          const x = 20 + i * 68;
-          const h = 180 + (i % 2) * 60 + (i < 3 ? i * 24 : (5 - i) * 24);
-          g.fillStyle(this.world.silDark, 1);
-          g.fillRect(x, 320 - h, 22, h);
-          g.fillEllipse(x + 24, 320 - h, 50, 26);
-          g.fillStyle(this.world.silLight, 0.6);
-          g.fillRect(x + 3, 320 - h, 5, h);
-        }
-      } else if (this.world.silhouette === "circuits") {
-        for (const [x, w, h] of [[0, 110, 210], [130, 90, 280], [240, 130, 170], [390, 60, 240]] as const) {
-          g.fillStyle(this.world.silDark, 1);
-          g.fillRect(x, 320 - h, w, h);
-          // Trace lines + node dots, like a motherboard skyline.
-          g.lineStyle(3, this.world.silLight, 0.7);
-          g.lineBetween(x + 12, 320 - h + 16, x + 12, 320 - 20);
-          g.lineBetween(x + 12, 320 - h + 16, x + w - 16, 320 - h + 16);
-          g.fillStyle(this.world.silLight, 0.9);
-          g.fillCircle(x + 12, 320 - h + 16, 5);
-          g.fillCircle(x + w - 16, 320 - h + 16, 5);
-        }
-      } else if (this.world.silhouette === "obelisks") {
-        for (const [x, w, h] of [[30, 46, 260], [120, 60, 310], [230, 40, 200], [310, 54, 280], [400, 30, 160]] as const) {
-          g.fillStyle(this.world.silDark, 1);
-          g.fillPoints(
-            [{ x, y: 320 }, { x: x + w * 0.14, y: 320 - h }, { x: x + w * 0.86, y: 320 - h }, { x: x + w, y: 320 }],
-            true,
-          );
-          g.fillTriangle(x + w * 0.14, 320 - h, x + w * 0.86, 320 - h, x + w / 2, 320 - h - w * 0.7);
-          g.fillStyle(this.world.silLight, 0.8);
-          g.fillRect(x + w / 2 - 2, 320 - h + 8, 4, h - 24);
-        }
-      } else if (this.world.silhouette === "flares") {
-        // Prominence loops erupting off a molten horizon.
-        g.fillStyle(this.world.silDark, 1);
-        g.fillRect(0, 250, 400, 70);
-        for (const [x, r] of [[70, 60], [200, 95], [330, 50]] as const) {
-          g.lineStyle(14, this.world.silDark, 1);
-          g.beginPath();
-          g.arc(x, 260, r, Math.PI, 0);
-          g.strokePath();
-          g.lineStyle(5, this.world.silLight, 0.8);
-          g.beginPath();
-          g.arc(x, 260, r, Math.PI, 0);
-          g.strokePath();
-        }
-      } else if (this.world.silhouette === "planets") {
-        // Ringed giants and moons low on the horizon.
-        for (const [x, y, r] of [[90, 210, 70], [280, 150, 46], [370, 250, 30]] as const) {
-          g.fillStyle(this.world.silDark, 1);
-          g.fillCircle(x, y, r);
-          g.fillStyle(this.world.silLight, 0.5);
-          g.fillCircle(x - r * 0.3, y - r * 0.3, r * 0.4);
-          g.lineStyle(6, this.world.silLight, 0.55);
-          g.strokeEllipse(x, y + r * 0.1, r * 3, r * 0.7);
-        }
-      } else if (this.world.silhouette === "summit") {
-        for (const [x, w, h] of [[0, 170, 260], [150, 210, 320], [330, 140, 230]] as const) {
-          g.fillStyle(this.world.silDark, 1);
-          g.fillTriangle(x, 320, x + w * 0.5, 320 - h, x + w, 320);
-          // Chrome facet: the whole lit half gleams, final-world flourish.
-          g.fillStyle(this.world.silLight, 0.85);
-          g.fillTriangle(x + w * 0.5, 320 - h, x + w * 0.5, 320, x + w * 0.28, 320);
-        }
-      } else {
-        const rocks: Array<[number, number, number]> = [
-          [0, 160, 140], [100, 190, 210], [240, 170, 160], [320, 160, 120],
-        ];
-        for (const [x, w, h] of rocks) {
-          g.fillStyle(this.world.silDark, 1);
-          g.fillTriangle(x, 320, x + w * 0.45, 320 - h, x + w, 320);
-          g.fillStyle(this.world.silLight, 0.55);
-          g.fillTriangle(x + w * 0.45, 320 - h, x + w * 0.62, 320 - h * 0.55, x + w * 0.3, 320 - h * 0.55);
-        }
-      }
-      g.generateTexture(silKey, 400, 320);
-      g.destroy();
-    }
+    ensureWorldTextures(this, this.world);
     if (!this.textures.exists("shadowtex")) {
       const g = this.make.graphics({ x: 0, y: 0 }, false);
       // Layered ellipses approximate a soft radial shadow.
@@ -560,18 +421,6 @@ export class GameScene extends Phaser.Scene {
       g.fillStyle(0x000000, 0.2);
       g.fillEllipse(48, 14, 50, 14);
       g.generateTexture("shadowtex", 96, 28);
-      g.destroy();
-    }
-    const groundKey = `ground-${this.world.id}`;
-    if (!this.textures.exists(groundKey)) {
-      const g = this.make.graphics({ x: 0, y: 0 }, false);
-      g.fillStyle(this.world.groundBase, 1);
-      g.fillRect(0, 0, 80, 280);
-      g.fillStyle(this.world.groundGrid, 1);
-      g.fillRect(0, 0, 2, 280); // vertical grid line
-      g.fillRect(0, 56, 80, 1); // faint horizontals
-      g.fillRect(0, 140, 80, 1);
-      g.generateTexture(groundKey, 80, 280);
       g.destroy();
     }
   }
@@ -631,8 +480,13 @@ export class GameScene extends Phaser.Scene {
     // Gold overlay shown only while the double-jump power-up is active —
     // distinct from the character's always-on signature aura.
     this.aura = this.add.rectangle(0, 0, s + 18, s + 18, 0xffd54f, 0.28).setVisible(false);
+    this.shieldRing = this.add
+      .circle(0, 0, s / 2 + 18)
+      .setStrokeStyle(4, 0x4dd0e1, 0.85)
+      .setVisible(false);
     this.playerView = this.add.container(PLAYER_X + s / 2, GROUND_Y - s / 2, [
       this.aura,
+      this.shieldRing,
       ...buildCharacterParts(this, spec, s),
     ]);
     attachAura(this, this.playerView, spec, s);
@@ -726,6 +580,17 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(20);
     this.levelText.setShadow(0, 4, "#000000", 6, false, true);
+    if (isFinaleLevel(this.levelNum)) {
+      this.add
+        .text(WORLD_WIDTH / 2, 210, "★ FINALE ★", {
+          fontFamily: "Arial Black, sans-serif",
+          fontSize: "26px",
+          color: "#ffd700",
+        })
+        .setOrigin(0.5)
+        .setDepth(20)
+        .setShadow(0, 3, "#000000", 5, false, true);
+    }
 
     // Progress bar across the top, GD-style.
     this.add.rectangle(160, 36, 400, 10, 0x232b3e).setOrigin(0, 0.5).setDepth(20);
@@ -798,8 +663,11 @@ export class GameScene extends Phaser.Scene {
     const kind = tryJump(this.runner, this.doubleJumpMs > 0);
     if (kind === "ground") {
       sfx.place();
+      haptics.tap();
+      this.punchScale(0.86, 1.14); // take-off stretch
     } else if (kind === "air") {
       sfx.clear(1);
+      haptics.tap();
       this.sparkle.explode(10, this.playerView.x, this.playerView.y + PLAYER_SIZE / 2);
     } else {
       this.jumpBufferMs = JUMP_BUFFER_MS;
@@ -810,7 +678,9 @@ export class GameScene extends Phaser.Scene {
     if (this.phase !== "playing") return;
     this.elapsedMs += deltaMs;
     const dt = Math.min(deltaMs, MAX_DT_MS) / 1000;
-    const speed = levelSpeed(this.levelNum);
+    const dashing = this.distancePx < this.dashUntilPx;
+    const speed =
+      levelSpeed(this.levelNum) * (this.slowmoMs > 0 ? SLOWMO_MUL : 1) * (dashing ? DASH_MUL : 1);
     this.distancePx += speed * dt;
 
     // Parallax: far stars drift, skyline rolls, ground grid matches the track.
@@ -864,10 +734,19 @@ export class GameScene extends Phaser.Scene {
     while (this.obstacles.length > 0 && this.obstacles[0]!.obs.x + this.obstacles[0]!.obs.w < -40) {
       this.obstacles.shift()!.view.destroy();
     }
+    if (this.attemptText) {
+      this.attemptText.x -= speed * dt;
+      if (this.attemptText.x < -240) {
+        this.attemptText.destroy();
+        this.attemptText = null;
+      }
+    }
+
     this.maybeSpawnPattern(speed);
     this.updatePowerUps(speed, dt, deltaMs);
     this.updateFinish();
     this.updateZones();
+    this.updateBoosts();
 
     const obsList = this.obstacles.map((o) => o.obs);
     const wasAirborne = !this.runner.grounded;
@@ -875,9 +754,19 @@ export class GameScene extends Phaser.Scene {
     if (this.runner.grounded && wasAirborne) {
       this.playerView.rotation = Math.round(this.playerView.rotation / (Math.PI / 2)) * (Math.PI / 2);
       this.dust.explode(6, this.playerView.x, this.runner.y - 4);
+      // Landing feel: squash the cube and kick the camera a hair.
+      this.punchScale(1.18, 0.82);
+      this.tweens.add({
+        targets: this.cameras.main,
+        scrollY: 4,
+        duration: 45,
+        yoyo: true,
+        ease: "Sine.easeOut",
+      });
       if (this.jumpBufferMs > 0) {
         jump(this.runner);
         sfx.place();
+        this.punchScale(0.86, 1.14);
       }
     }
     this.jumpBufferMs = Math.max(0, this.jumpBufferMs - deltaMs);
@@ -893,6 +782,11 @@ export class GameScene extends Phaser.Scene {
     this.timerText.setText(`${(this.elapsedMs / 1000).toFixed(1)}s`);
     this.progressFill.setScale(Math.min(1, this.distancePx / this.levelLengthPx), 1);
 
+    // Music builds with the run: sparse start, hat joins at 33%, full at 66%.
+    const prog = this.distancePx / this.levelLengthPx;
+    this.bgm.setVoiceGain("hat", prog >= 0.33 ? 1 : 0);
+    this.bgm.setVoiceGain("lead", prog >= 0.66 ? 1 : prog >= 0.33 ? 0.85 : 0.6);
+
     if (this.remainingPx() <= 40) {
       this.completeLevel();
       return;
@@ -904,7 +798,30 @@ export class GameScene extends Phaser.Scene {
       if (this.invulnMs <= 0) this.playerView.setAlpha(1);
       return;
     }
-    if (checkDeath(this.runner.y, obsList)) this.die();
+    if (checkDeath(this.runner.y, obsList)) {
+      if (this.shieldMs > 0) {
+        // The shield takes the hit: break it, blink through, keep running.
+        this.shieldMs = 0;
+        this.invulnMs = 800;
+        storage.set("shieldSaves", storage.get("shieldSaves", 0) + 1);
+        sfx.clear(3);
+        this.sparkle.explode(18, this.playerView.x, this.playerView.y);
+        floatBanner(this, "⛨ SAVED!", 520, "56px", "#4dd0e1");
+      } else {
+        this.die();
+      }
+      return;
+    }
+    // Near-miss: mark obstacles grazed, celebrate once safely past them.
+    for (const ov of this.obstacles) {
+      if (!ov.grazed && nearMiss(this.runner.y, [ov.obs])) ov.grazed = true;
+      if (ov.grazed && !ov.rewarded && ov.obs.x + ov.obs.w < PLAYER_X) {
+        ov.rewarded = true;
+        this.sparkle.explode(8, ov.obs.x + ov.obs.w / 2, this.playerView.y);
+        sfx.place();
+        storage.set("nearMisses", storage.get("nearMisses", 0) + 1);
+      }
+    }
   }
 
   /**
@@ -948,6 +865,81 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Launch pads and dash strips: helper track elements, never hazards. */
+  private buildBoosts(): void {
+    for (const b of trackBoosts(this.levelNum, this.levelLengthPx)) {
+      const view = this.add.container(WORLD_WIDTH + 400, 0).setVisible(false);
+      if (b.kind === "pad") {
+        // Amber launch wedge on the track.
+        const g = this.add.graphics();
+        g.fillStyle(0x8f5b00, 1);
+        g.fillRect(-45, GROUND_Y - 8, 90, 8);
+        g.fillStyle(0xffb300, 1);
+        g.fillTriangle(-45, GROUND_Y - 8, 45, GROUND_Y - 8, 0, GROUND_Y - 30);
+        g.fillStyle(0xffe082, 1);
+        g.fillTriangle(-22, GROUND_Y - 12, 22, GROUND_Y - 12, 0, GROUND_Y - 26);
+        view.add(g);
+        const chevron = this.add
+          .text(0, GROUND_Y - 52, "▲", { fontSize: "30px", color: "#ffb300" })
+          .setOrigin(0.5);
+        view.add(chevron);
+        this.tweens.add({ targets: chevron, y: GROUND_Y - 66, alpha: 0.4, duration: 500, yoyo: true, repeat: -1 });
+      } else {
+        // Cyan dash strip flush with the ground.
+        const g = this.add.graphics();
+        g.fillStyle(0x00e5ff, 0.25);
+        g.fillRect(-100, GROUND_Y - 10, 200, 10);
+        g.fillStyle(0x00e5ff, 0.9);
+        for (let x = -90; x < 90; x += 40) {
+          g.fillTriangle(x, GROUND_Y - 4, x, GROUND_Y - 16, x + 18, GROUND_Y - 10);
+        }
+        view.add(g);
+        this.tweens.add({ targets: g, alpha: 0.5, duration: 300, yoyo: true, repeat: -1 });
+      }
+      this.trackObjects.add(view);
+      this.boosts.push({ b, view, used: false });
+    }
+  }
+
+  /** True when something hangs over the track just ahead — pads hold fire. */
+  private overheadAhead(): boolean {
+    return this.obstacles.some(
+      ({ obs }) =>
+        obs.x > PLAYER_X - 100 &&
+        obs.x < PLAYER_X + 700 &&
+        (obs.elev > 0 ||
+          obs.kind === "gate" ||
+          obs.kind === "swing" ||
+          obs.kind === "crusher" ||
+          obs.kind === "drone" ||
+          obs.kind === "urchin"),
+    );
+  }
+
+  private updateBoosts(): void {
+    for (const bo of this.boosts) {
+      const x = PLAYER_X + (bo.b.at - this.distancePx);
+      bo.view.x = x;
+      bo.view.setVisible(x > -300 && x < WORLD_WIDTH + 300);
+      if (bo.used || this.distancePx < bo.b.at) continue;
+      bo.used = true;
+      if (bo.b.kind === "strip") {
+        this.dashUntilPx = bo.b.at + DASH_LENGTH_PX;
+        sfx.clear(2);
+        this.sparkle.explode(12, this.playerView.x, this.playerView.y);
+      } else if (this.runner.grounded && !this.overheadAhead()) {
+        // Launch! (Pads hold fire under overhead hazards — deterministic,
+        // since layouts and boost placements are both seeded.)
+        this.runner.vy = PAD_JUMP_VELOCITY;
+        this.runner.grounded = false;
+        this.runner.coyoteMs = 0;
+        sfx.clear(1);
+        this.punchScale(0.8, 1.2);
+        this.dust.explode(10, this.playerView.x, GROUND_Y - 4);
+      }
+    }
+  }
+
   /** The finish line scrolls in with the track once it's within reach. */
   private updateFinish(): void {
     const remaining = this.remainingPx();
@@ -962,7 +954,8 @@ export class GameScene extends Phaser.Scene {
   private buildFinishView(): Phaser.GameObjects.Container {
     const container = this.add.container(WORLD_WIDTH + 200, 0);
     this.trackObjects.add(container);
-    const accent = levelColor(this.levelNum);
+    // Finale gates are gold — the world's crowning run.
+    const accent = isFinaleLevel(this.levelNum) ? 0xffd700 : levelColor(this.levelNum);
     // Glowing pole from ground to sky with a checkered flag block.
     container.add(this.add.rectangle(0, GROUND_Y - 420, 26, 420, 0x0c0e14, 0.6).setOrigin(0.5, 0));
     container.add(this.add.rectangle(0, GROUND_Y - 420, 8, 420, accent).setOrigin(0.5, 0));
@@ -1006,31 +999,42 @@ export class GameScene extends Phaser.Scene {
         ({ obs }) => obs.x < x + 160 && obs.x + obs.w > x - 160,
       );
       if (!blocked) {
-        const p = makePowerUp(this.rng, x);
+        const p = makePowerUp(this.rng, x, this.levelNum);
         this.powerUps.push({ p, view: this.buildPowerUpView(p) });
         this.nextPowerUpAt = this.distancePx + powerUpGapPx(this.rng);
       }
     }
 
-    // Tick down the active effect.
-    if (this.doubleJumpMs > 0) {
-      this.doubleJumpMs = Math.max(0, this.doubleJumpMs - deltaMs);
-      this.powerBadge.setText(`⇈ ${Math.ceil(this.doubleJumpMs / 1000)}s`);
-      this.aura.setVisible(true);
-      this.aura.setAlpha(0.2 + 0.12 * Math.sin(this.time.now / 110));
-      if (this.doubleJumpMs === 0) {
-        this.powerBadge.setText("");
-        this.aura.setVisible(false);
-      }
+    // Tick down active effects and rebuild the badge column.
+    this.doubleJumpMs = Math.max(0, this.doubleJumpMs - deltaMs);
+    this.shieldMs = Math.max(0, this.shieldMs - deltaMs);
+    this.slowmoMs = Math.max(0, this.slowmoMs - deltaMs);
+    const badges: string[] = [];
+    if (this.doubleJumpMs > 0) badges.push(`⇈ ${Math.ceil(this.doubleJumpMs / 1000)}s`);
+    if (this.shieldMs > 0) badges.push(`⛨ ${Math.ceil(this.shieldMs / 1000)}s`);
+    if (this.slowmoMs > 0) badges.push(`⏳ ${Math.ceil(this.slowmoMs / 1000)}s`);
+    this.powerBadge.setText(badges.join("\n"));
+    this.aura.setVisible(this.doubleJumpMs > 0);
+    if (this.doubleJumpMs > 0) this.aura.setAlpha(0.2 + 0.12 * Math.sin(this.time.now / 110));
+    this.shieldRing.setVisible(this.shieldMs > 0);
+    if (this.shieldMs > 0) {
+      this.shieldRing.setAlpha(this.shieldMs < 3000 ? 0.35 + 0.5 * Math.abs(Math.sin(this.time.now / 90)) : 0.85);
     }
   }
 
   private collectPowerUp(p: PowerUp): void {
     const spec = POWER_UPS[p.kind];
-    this.doubleJumpMs = spec.durationMs;
+    if (p.kind === "doubleJump") {
+      this.doubleJumpMs = spec.durationMs;
+    } else if (p.kind === "shield") {
+      this.shieldMs = spec.durationMs;
+    } else {
+      this.slowmoMs = spec.durationMs;
+      storage.set("slowmoUses", storage.get("slowmoUses", 0) + 1);
+    }
     sfx.clear(2);
     this.sparkle.explode(16, PLAYER_X + PLAYER_SIZE / 2, p.y);
-    floatBanner(this, `${spec.label}!`, 520, "60px", "#ffd54f");
+    floatBanner(this, `${spec.label}!`, 520, "60px", `#${spec.color.toString(16).padStart(6, "0")}`);
   }
 
   private buildPowerUpView(p: PowerUp): Phaser.GameObjects.Container {
@@ -1043,7 +1047,7 @@ export class GameScene extends Phaser.Scene {
     const facet = this.add.rectangle(-5, -5, 18, 18, 0xffffff, 0.35).setAngle(45);
     this.tweens.add({ targets: facet, angle: 405, duration: 1800, repeat: -1 });
     const glyph = this.add
-      .text(0, 0, "⇈", {
+      .text(0, 0, spec.glyph, {
         fontFamily: "Arial Black, sans-serif",
         fontSize: "26px",
         color: "#12141c",
@@ -1144,9 +1148,23 @@ export class GameScene extends Phaser.Scene {
       storage.set("unlockedLevel", this.levelNum + 1);
     }
     sfx.clear(4);
+    haptics.win();
     stopAllMusic();
     this.sparkle.explode(30, this.playerView.x, this.playerView.y);
+    if (isFinaleLevel(this.levelNum)) {
+      // World finale: proper confetti send-off.
+      for (const [delay, x] of [[200, 200], [400, 520], [650, 360]] as const) {
+        this.time.delayedCall(delay, () => this.sparkle.explode(24, x, 400 + Math.random() * 200));
+      }
+    }
     void adsReady.then((ads) => ads.maybeShowInterstitial());
+    storage.set("totalClears", storage.get("totalClears", 0) + 1);
+    storage.set("totalPlayMs", storage.get("totalPlayMs", 0) + this.elapsedMs);
+    storage.set("totalMeters", storage.get("totalMeters", 0) + levelLengthM(this.levelNum));
+    if (levelDurationSec(this.levelNum) >= 45 && !this.usedContinue) {
+      storage.set("longNoRevive", true);
+    }
+    this.toastAchievements();
 
     const { width, height } = this.scale;
     const overlay = this.add.container(0, 0).setDepth(100);
@@ -1209,17 +1227,38 @@ export class GameScene extends Phaser.Scene {
   private die(): void {
     this.phase = "dead";
     this.trail.emitting = false;
+    stopAllMusic();
+    // Freeze-frame: hold the crash pose a beat, THEN detonate — the pause
+    // makes the explosion land harder (ported from the Unity v2 feel pass).
+    this.time.delayedCall(80, () => this.explodeAndShowDeathOverlay());
+  }
+
+  private explodeAndShowDeathOverlay(): void {
     this.burst.explode(28, this.playerView.x, this.playerView.y);
     this.playerView.setVisible(false);
     this.playerShadow.setVisible(false);
     this.aura.setVisible(false);
     this.powerBadge.setText("");
     sfx.gameOver();
-    stopAllMusic();
-    this.cameras.main.shake(200, 0.01);
+    haptics.thud();
+    this.cameras.main.shake(180, 0.012);
+    // Zoom punch: a quick push-in sells the impact.
+    this.tweens.add({
+      targets: this.cameras.main,
+      zoom: 1.06,
+      duration: 90,
+      yoyo: true,
+      ease: "Sine.easeOut",
+    });
     const pct = this.progressPct();
     const best = this.bumpBestPct(pct);
     void adsReady.then((ads) => ads.maybeShowInterstitial());
+    storage.set("totalDeaths", storage.get("totalDeaths", 0) + 1);
+    storage.set("totalPlayMs", storage.get("totalPlayMs", 0) + this.elapsedMs);
+    storage.set("totalMeters", storage.get("totalMeters", 0) + Math.floor(this.distancePx / 10));
+    this.toastAchievements();
+    this.deadButtons = [];
+    this.retryReadyAt = this.time.now + 400; // swallow panic taps
 
     const { width, height } = this.scale;
     const overlay = this.add.container(0, 0).setDepth(100);
@@ -1245,49 +1284,65 @@ export class GameScene extends Phaser.Scene {
         .setOrigin(0.5),
     );
 
-    overlay.add(
-      textButton(
-        this,
-        width / 2,
-        height * 0.56,
-        "↻  RETRY",
-        { text: "#a5d6a7", background: "#1e3320" },
-        () => this.scene.restart({ level: this.levelNum }),
-      ),
+    const retryBtn = textButton(
+      this,
+      width / 2,
+      height * 0.56,
+      "↻  RETRY",
+      { text: "#a5d6a7", background: "#1e3320" },
+      () => this.scene.restart({ level: this.levelNum }),
     );
+    const menuBtn = textButton(
+      this,
+      width / 2,
+      height * 0.75,
+      "☰  MENU",
+      { text: "#90caf9", background: "#16283d" },
+      () => this.scene.start("menu"),
+      "40px",
+    );
+    overlay.add([retryBtn, menuBtn]);
+    this.deadButtons.push(retryBtn, menuBtn);
     overlay.add(
-      textButton(
-        this,
-        width / 2,
-        height * 0.75,
-        "☰  MENU",
-        { text: "#90caf9", background: "#16283d" },
-        () => this.scene.start("menu"),
-        "40px",
-      ),
+      this.add
+        .text(width / 2, height * 0.85, "or tap anywhere to retry", {
+          fontFamily: "Arial, sans-serif",
+          fontSize: "30px",
+          color: "#5c667d",
+        })
+        .setOrigin(0.5),
     );
 
     if (!this.usedContinue) {
       void adsReady.then((ads) => {
         if (this.phase === "dead" && ads.isRewardedReady()) {
-          overlay.add(
-            textButton(
-              this,
-              width / 2,
-              height * 0.655,
-              "🎬  KEEP RUNNING (AD)",
-              { text: "#90caf9", background: "#16283d" },
-              () => {
-                void ads.showRewarded().then((earned) => {
-                  if (earned) this.revive(overlay);
-                });
-              },
-              "44px",
-            ),
+          const adBtn = textButton(
+            this,
+            width / 2,
+            height * 0.655,
+            "🎬  KEEP RUNNING (AD)",
+            { text: "#90caf9", background: "#16283d" },
+            () => {
+              void ads.showRewarded().then((earned) => {
+                if (earned) this.revive(overlay);
+              });
+            },
+            "44px",
           );
+          overlay.add(adBtn);
+          this.deadButtons.push(adBtn);
         }
       });
     }
+  }
+
+  /** Toast any achievements this run just unlocked, above the end overlay. */
+  private toastAchievements(): void {
+    newlyEarned(storage).forEach((a, i) => {
+      this.time.delayedCall(500 + i * 950, () =>
+        floatBanner(this, `🏆 ${a.name}`, 180, "48px", "#ffd54f", 120),
+      );
+    });
   }
 
   /** Rewarded revive: clear the obstacles ahead and blink through briefly. */
@@ -1305,6 +1360,8 @@ export class GameScene extends Phaser.Scene {
     this.runner.y = GROUND_Y;
     this.runner.vy = 0;
     this.runner.grounded = true;
+    this.squashTween?.stop();
+    this.playerView.setScale(1, 1);
     this.playerView.rotation = 0;
     this.playerView.setVisible(true);
     this.playerShadow.setVisible(true);

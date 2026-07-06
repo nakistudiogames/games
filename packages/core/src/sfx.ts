@@ -4,8 +4,15 @@
  */
 class Sfx {
   private ctx: AudioContext | null = null;
+  private muted = false;
+
+  /** Mutes/unmutes all effect sounds (independent of any music player). */
+  setMuted(muted: boolean): void {
+    this.muted = muted;
+  }
 
   private beep(freq: number, durationMs: number, type: OscillatorType = "sine", gain = 0.08): void {
+    if (this.muted) return;
     try {
       this.ctx ??= new AudioContext();
       const ctx = this.ctx;

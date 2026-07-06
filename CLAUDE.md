@@ -167,7 +167,38 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    clearability tested levels 1-25), no spawns in last 1200px
                    runway. HUD: % progress + top progress bar. Storage keys:
                    "unlockedLevel", "lastPlayed", "bestPct:<n>", "character",
-                   "godMode" ("highScore"/"bestLevel" are legacy, unused).
+                   "godMode", "attempts:<n>", "ach:<id>", "sfxMuted",
+                   "hapticsOff", stats counters (totalAttempts/totalDeaths/
+                   totalClears/totalPlayMs/totalMeters/nearMisses/shieldSaves/
+                   slowmoUses/longNoRevive) ("highScore"/"bestLevel" legacy,
+                   unused). "BETTER PACK" (2026-07-06): FEEL — instant retry
+                   (tap anywhere on death screen, 400ms panic guard,
+                   deadButtons hit-test; SPACE too) + scrolling "ATTEMPT N"
+                   tag; coyote time (COYOTE_MS 90, Runner.coyoteMs, tested);
+                   near-miss (nearMiss() = overlapsHazard pad 24 minus lethal,
+                   tested; sparks+count on pass); death juice (80ms freeze
+                   then burst/shake/zoom-punch) + squash&stretch (punchScale)
+                   + landing camera kick. PROGRESSION — src/achievements.ts
+                   (13 pure-checked achievements over PlayerStats snapshot,
+                   newlyEarned() grants + floatBanner toasts w/ depth 120;
+                   trophy 🏆 + stats 📊 menu overlays; floatBanner gained a
+                   depth param). CONTENT — power-ups now doubleJump/shield/
+                   slowmo (POWERUP_UNLOCK_LEVEL 1/6/16, rng.pick same stream
+                   — NOTE: this re-rolled layouts for levels 6+; shield eats
+                   one death → 800ms invuln, slowmo = SLOWMO_MUL 0.85 speed;
+                   badge column + shieldRing); track boosts (trackBoosts():
+                   seeded ^0xb005, pads L6+ launch at PAD_JUMP_VELOCITY 1.25x
+                   — suppressed when overheadAhead(), strips L9+ = DASH_MUL
+                   1.2 for 1600px, all tested); finales (isFinaleLevel = every
+                   5th: gap ×0.88 floored, music +8bpm via cache key, gold
+                   gate, ★FINALE HUD/menu tags, confetti). POLISH — MusicPlayer
+                   .setVoiceGain (hat off <33%, lead 60%→85%→100% w/ progress);
+                   menu attract mode (src/worldView.ts ensureWorldTextures —
+                   silhouette/ground gen EXTRACTED from GameScene, shared;
+                   world-themed backdrop + hopping demo cube, rebuilt on world/
+                   character change); @mg/core haptics (navigator.vibrate
+                   tap/thud/win, no-op where unsupported); sfx.setMuted +
+                   🔊SFX toggles in menu + pause overlay.
                    Obstacle encyclopedia: 📖 GUIDE button in the menu → paged
                    overlay of all kinds in unlock order; entries (name+blurb)
                    are pure data in src/obstacles.ts (Record<ObstacleKind,…>
@@ -250,7 +281,7 @@ npm run dev:2048   # merge-2048 on Vite dev server
 npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
-npm test           # vitest (15 + 12 + 9 + 8 + 102 = 146 tests, all green)
+npm test           # vitest (15 + 12 + 9 + 8 + 120 = 164 tests, all green)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)
 ```

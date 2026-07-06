@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   BASE_SPEED,
   COMET_IMPACT_X,
+  COYOTE_MS,
+  nearMiss,
   COMET_SLOPE,
   CRUSHER_FREQ,
   DRONE_ELEV_AMP,
@@ -33,6 +35,14 @@ import {
   TENTACLE_AMP,
   TENTACLE_FREQ,
   URCHIN_ELEV,
+  DASH_LENGTH_PX,
+  DASH_MUL,
+  PAD_JUMP_VELOCITY,
+  POWERUP_UNLOCK_LEVEL,
+  POWER_UPS,
+  SLOWMO_MUL,
+  isFinaleLevel,
+  trackBoosts,
   VINE_AMP,
   VINE_FREQ,
   VINE_MID,
@@ -108,6 +118,59 @@ describe("jump physics", () => {
     expect(r.grounded).toBe(false);
     for (let i = 0; i < 200 && !r.grounded; i++) stepRunner(r, 1 / 120, GROUND_Y);
     expect(r.y).toBe(GROUND_Y);
+  });
+
+  it("coyote time: a late jump after an edge drop still fires", () => {
+    const r: Runner = { y: GROUND_Y - 60, vy: 0, grounded: true, airJumpUsed: false };
+    stepRunner(r, 1 / 60, GROUND_Y); // walk off the block
+    expect(r.grounded).toBe(false);
+    stepRunner(r, 0.05, GROUND_Y); // 50ms falling — inside the window
+    expect(tryJump(r, false)).toBe("ground");
+    expect(r.vy).toBe(JUMP_VELOCITY);
+    expect(r.coyoteMs).toBe(0); // consumed — no second coyote jump
+    expect(tryJump(r, false)).toBeNull();
+  });
+
+  it("coyote time expires after COYOTE_MS", () => {
+    // Tall block: 120ms of falling covers ~60px, so the runner stays airborne.
+    const r: Runner = { y: GROUND_Y - 120, vy: 0, grounded: true, airJumpUsed: false };
+    stepRunner(r, 1 / 60, GROUND_Y);
+    for (let i = 0; i < 12; i++) stepRunner(r, 0.01, GROUND_Y);
+    expect(r.grounded).toBe(false);
+    expect(COYOTE_MS).toBeLessThan(120);
+    expect(tryJump(r, false)).toBeNull();
+  });
+
+  it("a normal jump opens no coyote window", () => {
+    const r = onGround();
+    jump(r);
+    stepRunner(r, 0.03, GROUND_Y);
+    expect(tryJump(r, false)).toBeNull();
+  });
+});
+
+describe("near-miss detection", () => {
+  it("registers a graze just above a spike but not a clean clear", () => {
+    const s = spike(PLAYER_X);
+    // Player bottom 66px up: 6px above the spike's 60px tip = inside the
+    // graze band (pad minus the spike's 12px fairness inset = 12px band).
+    expect(checkDeath(GROUND_Y - 66, [s])).toBe(false);
+    expect(nearMiss(GROUND_Y - 66, [s])).toBe(true);
+    // 90px up clears the graze band entirely.
+    expect(nearMiss(GROUND_Y - 90, [s])).toBe(false);
+  });
+
+  it("a lethal overlap is a death, not a near-miss", () => {
+    expect(nearMiss(GROUND_Y, [spike(PLAYER_X)])).toBe(false);
+    expect(checkDeath(GROUND_Y, [spike(PLAYER_X)])).toBe(true);
+  });
+
+  it("inactive timed hazards produce no graze", () => {
+    const ghost: Obstacle = {
+      x: PLAYER_X, w: 60, h: 110, elev: 0, kind: "phantom",
+      phase: -Math.PI / 2 - PLAYER_X * PHANTOM_FREQ, // fully phased out
+    };
+    expect(nearMiss(GROUND_Y, [ghost])).toBe(false);
   });
 });
 
@@ -947,5 +1010,89 @@ describe("track zones (mirror/flip render zones)", () => {
     expect(zoneKindAt(0, zones)).toBeNull();
     expect(zoneKindAt(z.start + 1, zones)).toBe(z.kind);
     expect(zoneKindAt(z.end, zones)).not.toBe(z.kind === "mirror" ? "flip" : "mirror");
+  });
+});
+
+describe("power-up pool (doubleJump / shield / slowmo)", () => {
+  it("gates kinds by level and stays deterministic per seed", () => {
+    expect(POWERUP_UNLOCK_LEVEL.doubleJump).toBe(1);
+    const kindsSeen = (level: number): Set<string> => {
+      const s = new Set<string>();
+      for (let seed = 1; seed <= 60; seed++) s.add(makePowerUp(new Rng(seed), 800, level).kind);
+      return s;
+    };
+    expect(kindsSeen(1)).toEqual(new Set(["doubleJump"]));
+    expect(kindsSeen(POWERUP_UNLOCK_LEVEL.shield)).toEqual(new Set(["doubleJump", "shield"]));
+    expect(kindsSeen(POWERUP_UNLOCK_LEVEL.slowmo)).toEqual(new Set(["doubleJump", "shield", "slowmo"]));
+    expect(makePowerUp(new Rng(7), 800, 20)).toEqual(makePowerUp(new Rng(7), 800, 20));
+  });
+
+  it("every spec has a duration, label, color and glyph", () => {
+    for (const spec of Object.values(POWER_UPS)) {
+      expect(spec.durationMs).toBeGreaterThan(1000);
+      expect(spec.label.length).toBeGreaterThan(3);
+      expect(spec.glyph.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("slow-mo only ever slows the world down", () => {
+    expect(SLOWMO_MUL).toBeLessThan(1);
+    expect(SLOWMO_MUL).toBeGreaterThan(0.5);
+  });
+});
+
+describe("track boosts (launch pads / dash strips)", () => {
+  const lengthFor = (level: number): number => levelLengthM(level) * 10;
+
+  it("pads unlock at level 6, strips at level 9", () => {
+    expect(trackBoosts(5, lengthFor(5))).toHaveLength(0);
+    for (const level of [6, 7, 8]) {
+      const boosts = trackBoosts(level, lengthFor(level));
+      expect(boosts.length).toBeGreaterThanOrEqual(2);
+      expect(boosts.every((b) => b.kind === "pad")).toBe(true);
+    }
+    // Strips appear somewhere from level 9 on (seeded coin flips).
+    const stripLevels = [9, 10, 11, 12, 13, 14].filter((lvl) =>
+      trackBoosts(lvl, lengthFor(lvl)).some((b) => b.kind === "strip"),
+    );
+    expect(stripLevels.length).toBeGreaterThan(0);
+  });
+
+  it("boosts are sorted, spaced, and clear of the start and runway", () => {
+    for (const level of [6, 9, 20, 47, 80, 99]) {
+      const len = lengthFor(level);
+      const boosts = trackBoosts(level, len);
+      let prev = -Infinity;
+      for (const b of boosts) {
+        expect(b.at).toBeGreaterThanOrEqual(1200);
+        if (prev !== -Infinity) expect(b.at - prev).toBeGreaterThanOrEqual(900);
+        const margin = b.kind === "strip" ? DASH_LENGTH_PX : 200;
+        expect(b.at + margin).toBeLessThanOrEqual(len - 1600);
+        prev = b.at;
+      }
+    }
+  });
+
+  it("is deterministic and pads launch strictly higher than a normal jump", () => {
+    expect(trackBoosts(30, lengthFor(30))).toEqual(trackBoosts(30, lengthFor(30)));
+    expect(PAD_JUMP_VELOCITY).toBeLessThan(JUMP_VELOCITY); // more negative = harder launch
+    expect(DASH_MUL).toBeGreaterThan(1);
+  });
+});
+
+describe("finale levels (every world's 5th)", () => {
+  it("flags exactly the multiples of LEVELS_PER_WORLD", () => {
+    expect(isFinaleLevel(5)).toBe(true);
+    expect(isFinaleLevel(100)).toBe(true);
+    expect(isFinaleLevel(4)).toBe(false);
+    expect(isFinaleLevel(41)).toBe(false);
+  });
+
+  it("tightens gaps vs. its neighbors but respects the floor", () => {
+    expect(levelGapScale(5)).toBeLessThan(levelGapScale(4));
+    // From level 9 the base scale is already at the floor — finales stay there.
+    expect(levelGapScale(10)).toBe(0.75);
+    // The 1..99 clearability loop above already proves finales stay fair.
+    expect(levelGapScale(100)).toBe(0.75);
   });
 });

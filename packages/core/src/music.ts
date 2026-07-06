@@ -18,6 +18,8 @@ const STEPS = 16;
 const LOOKAHEAD_MS = 25;
 const SCHEDULE_AHEAD_SEC = 0.12;
 
+export type MusicVoice = "kick" | "hat" | "bass" | "lead";
+
 export class MusicPlayer {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
@@ -26,6 +28,8 @@ export class MusicPlayer {
   private timer: ReturnType<typeof setInterval> | null = null;
   private step = 0;
   private nextTime = 0;
+  /** Per-voice gain multipliers — lets games fade layers in and out live. */
+  private voiceGains: Record<MusicVoice, number> = { kick: 1, hat: 1, bass: 1, lead: 1 };
 
   constructor(
     private readonly pattern: MusicPattern,
@@ -87,6 +91,11 @@ export class MusicPlayer {
     return this.playing;
   }
 
+  /** Sets a voice's live gain (0..1); 0 silences that layer entirely. */
+  setVoiceGain(voice: MusicVoice, gain: number): void {
+    this.voiceGains[voice] = Math.max(0, Math.min(1, gain));
+  }
+
   private scheduler(): void {
     const ctx = this.ctx;
     if (!ctx || !this.master) return;
@@ -99,12 +108,13 @@ export class MusicPlayer {
 
   private scheduleStep(step: number, t: number): void {
     const p = this.pattern;
-    if (p.kick[step]) this.playKick(t);
-    if (p.hat[step]) this.playHat(t);
+    const vg = this.voiceGains;
+    if (p.kick[step] && vg.kick > 0) this.playKick(t, vg.kick);
+    if (p.hat[step] && vg.hat > 0) this.playHat(t, vg.hat);
     const bass = p.bass[step];
-    if (bass != null) this.playBass(bass, t);
+    if (bass != null && vg.bass > 0) this.playBass(bass, t, vg.bass);
     const lead = p.lead[step];
-    if (lead != null) this.playLead(lead, t);
+    if (lead != null && vg.lead > 0) this.playLead(lead, t, vg.lead);
   }
 
   private env(t: number, peak: number, decaySec: number): GainNode {
@@ -114,31 +124,31 @@ export class MusicPlayer {
     return g;
   }
 
-  private playKick(t: number): void {
+  private playKick(t: number, gain = 1): void {
     const ctx = this.ctx!;
     const osc = ctx.createOscillator();
     osc.frequency.setValueAtTime(150, t);
     osc.frequency.exponentialRampToValueAtTime(40, t + 0.1);
-    const g = this.env(t, 1.0, 0.14);
+    const g = this.env(t, 1.0 * gain, 0.14);
     osc.connect(g).connect(this.master!);
     osc.start(t);
     osc.stop(t + 0.15);
   }
 
-  private playHat(t: number): void {
+  private playHat(t: number, gain = 1): void {
     const ctx = this.ctx!;
     const src = ctx.createBufferSource();
     src.buffer = this.noiseBuffer;
     const hp = ctx.createBiquadFilter();
     hp.type = "highpass";
     hp.frequency.value = 7000;
-    const g = this.env(t, 0.25, 0.04);
+    const g = this.env(t, 0.25 * gain, 0.04);
     src.connect(hp).connect(g).connect(this.master!);
     src.start(t);
     src.stop(t + 0.05);
   }
 
-  private playBass(freq: number, t: number): void {
+  private playBass(freq: number, t: number, gain = 1): void {
     const ctx = this.ctx!;
     const osc = ctx.createOscillator();
     osc.type = "sawtooth";
@@ -146,18 +156,18 @@ export class MusicPlayer {
     const lp = ctx.createBiquadFilter();
     lp.type = "lowpass";
     lp.frequency.value = 500;
-    const g = this.env(t, 0.5, 0.12);
+    const g = this.env(t, 0.5 * gain, 0.12);
     osc.connect(lp).connect(g).connect(this.master!);
     osc.start(t);
     osc.stop(t + 0.13);
   }
 
-  private playLead(freq: number, t: number): void {
+  private playLead(freq: number, t: number, gain = 1): void {
     const ctx = this.ctx!;
     const osc = ctx.createOscillator();
     osc.type = "square";
     osc.frequency.value = freq;
-    const g = this.env(t, 0.16, 0.16);
+    const g = this.env(t, 0.16 * gain, 0.16);
     osc.connect(g);
     g.connect(this.master!);
     if (this.delay) g.connect(this.delay);

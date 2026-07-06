@@ -22,7 +22,12 @@ export interface Runner {
   grounded: boolean;
   /** The one air jump (double-jump power-up) has been spent this airtime. */
   airJumpUsed: boolean;
+  /** Coyote-time budget: ms left to still ground-jump after an edge drop. */
+  coyoteMs?: number;
 }
+
+/** Edge forgiveness: a jump still fires this long after walking off a ledge. */
+export const COYOTE_MS = 90;
 
 /**
  * One new kind unlocks per world (see KIND_UNLOCK_LEVEL):
@@ -241,12 +246,19 @@ export function levelSpeed(level: number): number {
   return Math.min(MAX_SPEED, BASE_SPEED + (level - 1) * LEVEL_SPEED_STEP);
 }
 
+/** Every world's 5th level is its finale: denser, faster music, gold gate. */
+export function isFinaleLevel(level: number): boolean {
+  return level >= 1 && level % LEVELS_PER_WORLD === 0;
+}
+
 /**
  * Scales the gap between obstacle patterns: early levels are roomy, later
- * ones tighten toward the floor. Floor keeps every level clearable (see test).
+ * ones tighten toward the floor; finales tighten a further 12%. The shared
+ * floor keeps every level clearable (see test).
  */
 export function levelGapScale(level: number): number {
-  return Math.max(0.75, 1.2 - 0.06 * (level - 1));
+  const s = Math.max(0.75, 1.2 - 0.06 * (level - 1));
+  return isFinaleLevel(level) ? Math.max(0.75, s * 0.88) : s;
 }
 
 /** Accent color per WORLD (5 levels each), cycling — one per world theme. */
@@ -310,9 +322,10 @@ export function jumpDistancePx(speed: number): number {
  * happened (null = nothing).
  */
 export function tryJump(r: Runner, allowAirJump: boolean): "ground" | "air" | null {
-  if (r.grounded) {
+  if (r.grounded || (r.coyoteMs ?? 0) > 0) {
     r.vy = JUMP_VELOCITY;
     r.grounded = false;
+    r.coyoteMs = 0;
     return "ground";
   }
   if (allowAirJump && !r.airJumpUsed) {
@@ -346,10 +359,13 @@ export function supportAt(bottomY: number, obstacles: readonly Obstacle[]): numb
 /** Advances physics one frame. Lands on `support` when falling through it. */
 export function stepRunner(r: Runner, dtSec: number, support: number): void {
   if (r.grounded && r.y < support - 0.5) {
-    // The surface under the player dropped away (walked off a block).
+    // The surface under the player dropped away (walked off a block) —
+    // open the coyote window so a marginally late jump still counts.
     r.grounded = false;
+    r.coyoteMs = COYOTE_MS;
   }
   if (r.grounded) return;
+  r.coyoteMs = Math.max(0, (r.coyoteMs ?? 0) - dtSec * 1000);
   r.vy += GRAVITY * dtSec;
   const newY = r.y + r.vy * dtSec;
   if (r.vy > 0 && newY >= support) {
@@ -376,14 +392,17 @@ export function stepRunner(r: Runner, dtSec: number, support: number): void {
  * their motion function currently puts them, gates kill outside the window,
  * urchins/obelisks/flares are static rects/circles with fairness insets.
  */
-export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boolean {
-  const pl = PLAYER_X;
-  const pr = PLAYER_X + PLAYER_SIZE;
-  const pt = bottomY - PLAYER_SIZE;
+function overlapsHazard(bottomY: number, obstacles: readonly Obstacle[], pad: number): boolean {
+  // `pad` expands the player box uniformly — pad 0 is the lethal test,
+  // a positive pad is the near-miss graze band.
+  const pl = PLAYER_X - pad;
+  const pr = PLAYER_X + PLAYER_SIZE + pad;
+  const pt = bottomY - PLAYER_SIZE - pad;
+  const pb = bottomY + pad;
   for (const o of obstacles) {
     if (o.kind === "pit") {
       const inset = 22;
-      if (bottomY >= GROUND_Y - 2 && pr > o.x + inset && pl < o.x + o.w - inset) return true;
+      if (pb >= GROUND_Y - 2 && pr > o.x + inset && pl < o.x + o.w - inset) return true;
       continue;
     }
     if (o.kind === "phantom" || o.kind === "talon" || o.kind === "reaper") {
@@ -392,7 +411,7 @@ export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boo
         o.kind === "phantom" ? phantomSolid(o) : o.kind === "talon" ? talonActive(o) : reaperActive(o);
       if (!on) continue;
       const inset = 6;
-      if (pr > o.x + inset && pl < o.x + o.w - inset && bottomY > GROUND_Y - o.h + 6) {
+      if (pr > o.x + inset && pl < o.x + o.w - inset && pb > GROUND_Y - o.h + 6) {
         return true;
       }
       continue;
@@ -400,7 +419,7 @@ export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boo
     if (o.kind === "vine") {
       // The lash height oscillates — only the current reach kills.
       const inset = 8;
-      if (pr > o.x + inset && pl < o.x + o.w - inset && bottomY > GROUND_Y - vineHeight(o) + 6) {
+      if (pr > o.x + inset && pl < o.x + o.w - inset && pb > GROUND_Y - vineHeight(o) + 6) {
         return true;
       }
       continue;
@@ -409,8 +428,8 @@ export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boo
       // Twin energy bars; the 130px window between them is the way through.
       const inset = 6;
       if (pr > o.x + inset && pl < o.x + o.w - inset) {
-        if (bottomY > GROUND_Y - GATE_GAP_LO + 4) return true; // bottom bar
-        if (bottomY - PLAYER_SIZE < GROUND_Y - GATE_GAP_HI - 4) return true; // top bar
+        if (pb > GROUND_Y - GATE_GAP_LO + 4) return true; // bottom bar
+        if (pt < GROUND_Y - GATE_GAP_HI - 4) return true; // top bar
       }
       continue;
     }
@@ -422,7 +441,7 @@ export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boo
       const cx = o.x + shift + o.w / 2;
       const cy = GROUND_Y - elev - o.h / 2;
       const nx = Math.max(pl, Math.min(cx, pr));
-      const ny = Math.max(pt, Math.min(cy, bottomY));
+      const ny = Math.max(pt, Math.min(cy, pb));
       if ((nx - cx) ** 2 + (ny - cy) ** 2 < r * r) return true;
       continue;
     }
@@ -431,7 +450,7 @@ export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boo
       const elev = o.kind === "crusher" ? crusherElev(o) : cometElev(o);
       const inset = 8;
       const top = GROUND_Y - elev - o.h;
-      if (pr > o.x + inset && pl < o.x + o.w - inset && bottomY > top + 6 && pt < GROUND_Y - elev - 4) {
+      if (pr > o.x + inset && pl < o.x + o.w - inset && pb > top + 6 && pt < GROUND_Y - elev - 4) {
         return true;
       }
       continue;
@@ -439,7 +458,7 @@ export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boo
     if (o.kind === "flare") {
       // Ground fire ribbon: arc-style — lethal only near track level.
       const inset = 10;
-      if (pr > o.x + inset && pl < o.x + o.w - inset && bottomY > GROUND_Y - o.h + 8) {
+      if (pr > o.x + inset && pl < o.x + o.w - inset && pb > GROUND_Y - o.h + 8) {
         return true;
       }
       continue;
@@ -448,7 +467,7 @@ export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boo
       // The vent itself is harmless — only the erupting column kills.
       if (!geyserActive(o)) continue;
       const inset = 6;
-      if (pr > o.x + inset && pl < o.x + o.w - inset && bottomY > GROUND_Y - o.h + 6) {
+      if (pr > o.x + inset && pl < o.x + o.w - inset && pb > GROUND_Y - o.h + 6) {
         return true;
       }
       continue;
@@ -457,14 +476,14 @@ export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boo
       // The hitbox follows the sway, not the anchor.
       const sx = o.x + tentacleSway(o);
       const inset = 8;
-      if (pr > sx + inset && pl < sx + o.w - inset && bottomY > GROUND_Y - o.h + 6) {
+      if (pr > sx + inset && pl < sx + o.w - inset && pb > GROUND_Y - o.h + 6) {
         return true;
       }
       continue;
     }
     if (o.kind === "arc") {
       const inset = 10;
-      if (pr > o.x + inset && pl < o.x + o.w - inset && bottomY > GROUND_Y - o.h + 8) {
+      if (pr > o.x + inset && pl < o.x + o.w - inset && pb > GROUND_Y - o.h + 8) {
         return true;
       }
       continue;
@@ -476,7 +495,7 @@ export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boo
       const cy = GROUND_Y - elev - o.h / 2;
       // Circle vs player rect: distance from center to the nearest rect point.
       const nx = Math.max(pl, Math.min(cx, pr));
-      const ny = Math.max(pt, Math.min(cy, bottomY));
+      const ny = Math.max(pt, Math.min(cy, pb));
       if ((nx - cx) ** 2 + (ny - cy) ** 2 < r * r) return true;
       continue;
     }
@@ -484,7 +503,7 @@ export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boo
     const bottom = GROUND_Y - o.elev;
     if (o.kind === "laser" || o.kind === "obelisk") {
       const inset = 6;
-      if (pr > o.x + inset && pl < o.x + o.w - inset && bottomY > top + 6 && pt < bottom) {
+      if (pr > o.x + inset && pl < o.x + o.w - inset && pb > top + 6 && pt < bottom) {
         return true;
       }
     } else if (o.kind === "spike") {
@@ -492,16 +511,38 @@ export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boo
       if (
         pr > o.x + inset &&
         pl < o.x + o.w - inset &&
-        bottomY > top + 12 &&
+        pb > top + 12 &&
         pt < bottom - 12
       ) {
         return true;
       }
     } else {
-      if (pr > o.x && pl < o.x + o.w && bottomY > top + 8 && pt < bottom - 4) return true;
+      if (pr > o.x && pl < o.x + o.w && pb > top + 8 && pt < bottom - 4) return true;
     }
   }
   return false;
+}
+
+export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boolean {
+  return overlapsHazard(bottomY, obstacles, 0);
+}
+
+/**
+ * Graze band width around every hazard for the near-miss reward. Wider than
+ * the per-kind fairness insets (up to 16px), so a real band remains after
+ * the insets are subtracted.
+ */
+export const NEAR_MISS_PAD = 24;
+
+/**
+ * True when the player is inside a hazard's graze band without actually
+ * dying — the "that was close" moment worth celebrating.
+ */
+export function nearMiss(bottomY: number, obstacles: readonly Obstacle[]): boolean {
+  return (
+    !overlapsHazard(bottomY, obstacles, 0) &&
+    overlapsHazard(bottomY, obstacles, NEAR_MISS_PAD)
+  );
 }
 
 /** An obstacle group spawned as a unit; dx is relative to the pattern start. */
@@ -1039,19 +1080,78 @@ export function zoneKindAt(distancePx: number, zones: readonly TrackZone[]): Tra
 }
 
 // ---------------------------------------------------------------------------
+// Track boosts: launch pads (auto high jump on contact) and dash strips
+// (temporary speed-up). Helpers, never hazards: a pad adds air clearance and
+// a strip lengthens the jump distance, so px-gap clearability only improves.
+
+export type BoostKind = "pad" | "strip";
+
+export interface TrackBoost {
+  /** Distance along the level, in px. */
+  at: number;
+  kind: BoostKind;
+}
+
+/** Pad jumps launch 25% harder: apex ≈ 312px vs the normal ≈ 200px. */
+export const PAD_JUMP_VELOCITY = JUMP_VELOCITY * 1.25;
+export const DASH_MUL = 1.2;
+export const DASH_LENGTH_PX = 1600;
+export const PAD_MIN_LEVEL = 6;
+export const STRIP_MIN_LEVEL = 9;
+
+/**
+ * Seeded boost placements: 2-4 per level from PAD_MIN_LEVEL (strips join at
+ * STRIP_MIN_LEVEL), one per even segment of the track so they're ≥900px
+ * apart, all clear of the start and the finish runway. Separate rng stream —
+ * layouts unchanged.
+ */
+export function trackBoosts(level: number, lengthPx: number): TrackBoost[] {
+  if (level < PAD_MIN_LEVEL) return [];
+  const rng = new Rng((levelSeed(level) ^ 0xb005) >>> 0);
+  const count = 2 + Math.floor(rng.next() * 3);
+  const start = 1200;
+  const end = lengthPx - 1600;
+  const seg = (end - start) / count;
+  const boosts: TrackBoost[] = [];
+  for (let i = 0; i < count; i++) {
+    const kind: BoostKind = level >= STRIP_MIN_LEVEL && rng.next() < 0.5 ? "strip" : "pad";
+    const margin = kind === "strip" ? DASH_LENGTH_PX : 200;
+    const lo = start + i * seg;
+    const hi = Math.min(start + (i + 1) * seg - 900, end - margin);
+    if (hi <= lo) continue;
+    boosts.push({ at: lo + rng.next() * (hi - lo), kind });
+  }
+  return boosts;
+}
+
+// ---------------------------------------------------------------------------
 // Power-ups: temporary timed abilities collected as floating pickups.
 
-export type PowerUpKind = "doubleJump";
+export type PowerUpKind = "doubleJump" | "shield" | "slowmo";
 
 export interface PowerUpSpec {
   durationMs: number;
   label: string;
   color: number;
+  /** HUD/pickup glyph. */
+  glyph: string;
 }
 
 export const POWER_UPS: Record<PowerUpKind, PowerUpSpec> = {
-  doubleJump: { durationMs: 10_000, label: "DOUBLE JUMP", color: 0xffd54f },
+  doubleJump: { durationMs: 10_000, label: "DOUBLE JUMP", color: 0xffd54f, glyph: "⇈" },
+  shield: { durationMs: 15_000, label: "SHIELD", color: 0x4dd0e1, glyph: "⛨" },
+  slowmo: { durationMs: 6_000, label: "SLOW-MO", color: 0xb388ff, glyph: "⏳" },
 };
+
+/** Level at which each power-up kind joins the pickup pool. */
+export const POWERUP_UNLOCK_LEVEL: Record<PowerUpKind, number> = {
+  doubleJump: 1,
+  shield: 6,
+  slowmo: 16,
+};
+
+/** World-speed multiplier while Slow-Mo is active — only ever easier. */
+export const SLOWMO_MUL = 0.85;
 
 export const POWERUP_SIZE = 56;
 
@@ -1063,11 +1163,14 @@ export interface PowerUp {
 }
 
 /** Pickups float within single-jump reach (apex ≈ 200px above ground). */
-export function makePowerUp(rng: Rng, x: number): PowerUp {
+export function makePowerUp(rng: Rng, x: number, level = 1): PowerUp {
+  const kinds = (Object.keys(POWERUP_UNLOCK_LEVEL) as PowerUpKind[]).filter(
+    (k) => POWERUP_UNLOCK_LEVEL[k] <= level,
+  );
   return {
     x,
     y: GROUND_Y - 90 - rng.next() * 90,
-    kind: "doubleJump",
+    kind: rng.pick(kinds),
   };
 }
 
