@@ -50,8 +50,29 @@ namespace CubeDash.View
                 (14, 30, 2, 0.9f), (70, 12, 3, 0.5f), (120, 55, 2, 0.7f), (40, 90, 2, 0.4f),
                 (95, 120, 3, 0.8f), (150, 100, 2, 0.5f), (25, 140, 2, 0.6f), (130, 20, 2, 0.35f),
             };
-            foreach (var (x, y, s, a) in pts) p.FillRect(x, y, s, s, 0xffffff, a);
+            foreach (var (x, y, s, a) in pts)
+            {
+                // Soft halo + crisp core reads as a real point of light.
+                p.FillCircle(x, y, s * 2.4, 0xffffff, a * 0.18f);
+                p.FillCircle(x, y, s * 0.95, 0xffffff, a);
+            }
             return p.ToSprite(new Vector2(0f, 1f));
+        });
+
+        /// <summary>Radial darkening toward the corners: adds contrast and
+        /// focuses the eye on the track. Stretched over the whole view.</summary>
+        public static Sprite Vignette() => Cached("vignette", () =>
+        {
+            var p = new Painter(180, 180);
+            for (int y = 0; y < 180; y++)
+                for (int x = 0; x < 180; x++)
+                {
+                    double nx = (x + 0.5) / 90.0 - 1, ny = (y + 0.5) / 90.0 - 1;
+                    double d = System.Math.Sqrt(nx * nx + ny * ny) / 1.4142;
+                    float t = Mathf.Clamp01(((float)d - 0.55f) / 0.45f);
+                    if (t > 0) p.FillRect(x, y, 1, 1, 0x000000, t * t * 0.42f);
+                }
+            return p.ToSprite();
         });
 
         /// <summary>World silhouette strip, 400x320: city buildings / crystal
@@ -111,32 +132,22 @@ namespace CubeDash.View
         public static Sprite Shadow() => Cached("shadow", () =>
         {
             var p = new Painter(96, 28);
-            FillEllipse(p, 48, 14, 48, 14, 0x000000, 0.1f);
-            FillEllipse(p, 48, 14, 37, 10.5, 0x000000, 0.14f);
-            FillEllipse(p, 48, 14, 25, 7, 0x000000, 0.2f);
-            return p.ToSprite(filter: FilterMode.Bilinear);
+            p.FillEllipse(48, 14, 48, 14, 0x000000, 0.1f);
+            p.FillEllipse(48, 14, 37, 10.5, 0x000000, 0.14f);
+            p.FillEllipse(48, 14, 25, 7, 0x000000, 0.2f);
+            return p.ToSprite();
         });
-
-        private static void FillEllipse(Painter p, double cx, double cy, double rx, double ry,
-            uint color, float alpha)
-        {
-            for (int y = 0; y < p.H; y++)
-                for (int x = 0; x < p.W; x++)
-                {
-                    double dx = (x + 0.5 - cx) / rx, dy = (y + 0.5 - cy) / ry;
-                    if (dx * dx + dy * dy <= 1) p.FillRect(x, y, 1, 1, color, alpha);
-                }
-        }
     }
 
-    /// <summary>TileSprite equivalent: a horizontally-tiled sprite scrolled by
-    /// adjusting position and wrapping every tile width.</summary>
+    /// <summary>TileSprite equivalent: a horizontally-tiled sprite scrolled in
+    /// LOCAL space (so it can be parented to the camera as a parallax layer),
+    /// wrapping every tile width.</summary>
     public sealed class ScrollingTiled : MonoBehaviour
     {
-        private float _tileW;
-        private float _offset;
+        private float _tileW; // one tile, in sprite world units
+        private Vector3 _baseLocal;
 
-        /// <summary>Anchor = top-left in Phaser space; height stretches the tile.</summary>
+        /// <summary>Anchor = top-left in 720x1280 screen space (y down).</summary>
         public static ScrollingTiled Create(Transform parent, string name, Sprite sprite,
             double x, double y, double width, double height, int order, float alpha = 1f)
         {
@@ -146,29 +157,34 @@ namespace CubeDash.View
             sr.sprite = sprite;
             sr.drawMode = SpriteDrawMode.Tiled;
             sr.tileMode = SpriteTileMode.Continuous;
-            float texW = sprite.rect.width;
+            // Tile width in WORLD units (textures are supersampled: PPU > 1).
+            float texW = sprite.rect.width / sprite.pixelsPerUnit;
             // Tiles in BOTH axes (like Phaser's TileSprite); one extra tile of
             // width so the wrap-around never shows a gap.
             sr.size = new Vector2((float)width + texW, (float)height);
             sr.sortingOrder = order;
             sr.color = new Color(1, 1, 1, alpha);
-            go.transform.position = Px.V(x, y);
+            go.transform.localPosition = Px.V(x, y);
             var st = go.AddComponent<ScrollingTiled>();
             st._tileW = texW;
-            st._basePos = go.transform.position;
+            st._baseLocal = go.transform.localPosition;
             return st;
         }
 
-        private Vector3 _basePos;
-
-        /// <summary>Equivalent of `tilePositionX += d`. Wraps at one tile width
-        /// (in world units, so scaled layers wrap correctly too).</summary>
-        public void Scroll(float d)
+        /// <summary>Raise/adjust the layer's local anchor (e.g. z push-back).</summary>
+        public void Nudge(Vector3 delta)
         {
-            float tileWorldW = _tileW * transform.lossyScale.x;
-            _offset = (_offset + d) % tileWorldW;
-            if (_offset < 0) _offset += tileWorldW;
-            transform.position = _basePos - new Vector3(_offset, 0, 0);
+            _baseLocal += delta;
+            transform.localPosition = _baseLocal;
+        }
+
+        /// <summary>Sets the absolute tile scroll (equivalent of tilePositionX).</summary>
+        public void ScrollTo(float offset)
+        {
+            float tileLocalW = _tileW * transform.localScale.x;
+            float o = offset % tileLocalW;
+            if (o < 0) o += tileLocalW;
+            transform.localPosition = _baseLocal - new Vector3(o, 0, 0);
         }
     }
 }

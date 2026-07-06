@@ -29,6 +29,9 @@ namespace CubeDash.Logic
 
     public static class WorldData
     {
+        /// <summary>Levels per world theme before cycling to the next.</summary>
+        public const int LEVELS_PER_WORLD = 5;
+
         // Note frequencies (Hz) — same tables as the web build.
         private const double E2 = 82.41, G2 = 98.0, A2 = 110.0, C3 = 130.81;
         private const double D2 = 73.42, F2 = 87.31, BB2 = 116.54;
@@ -96,7 +99,7 @@ namespace CubeDash.Logic
 
         /// <summary>1-based world number for a level (world 1 = levels 1-5, ...).</summary>
         public static int WorldNumberForLevel(int level) =>
-            (Math.Max(1, level) - 1) / RunnerLogic.LEVELS_PER_WORLD + 1;
+            (Math.Max(1, level) - 1) / LEVELS_PER_WORLD + 1;
 
         public static WorldTheme ForLevel(int level) =>
             WORLDS[(WorldNumberForLevel(level) - 1) % WORLDS.Length];

@@ -32,22 +32,31 @@ namespace CubeDash.View
     /// CPU pixel canvas — the stand-in for Phaser's Graphics.generateTexture:
     /// every texture in the game is drawn at runtime, no assets on disk.
     /// Canvas coordinates are y-DOWN like the web code it ports.
+    /// All input coordinates are LOGICAL pixels; internally everything is
+    /// rasterized at SS× resolution (sprite PPU = SS), so edges stay crisp
+    /// at any window size.
     /// </summary>
     public sealed class Painter
     {
-        public readonly int W, H;
+        /// <summary>Supersampling factor for every generated texture.</summary>
+        public const int SS = 3;
+
+        public readonly int W, H;      // logical size
+        private readonly int _bw, _bh; // buffer (texel) size
         private readonly Color[] _buf;
 
         public Painter(int w, int h)
         {
             W = w; H = h;
-            _buf = new Color[w * h]; // transparent black
+            _bw = w * SS;
+            _bh = h * SS;
+            _buf = new Color[_bw * _bh]; // transparent black
         }
 
         private void Blend(int x, int y, Color c)
         {
-            if (x < 0 || y < 0 || x >= W || y >= H) return;
-            int i = (H - 1 - y) * W + x; // flip to Unity's bottom-up rows
+            if (x < 0 || y < 0 || x >= _bw || y >= _bh) return;
+            int i = (_bh - 1 - y) * _bw + x; // flip to Unity's bottom-up rows
             Color d = _buf[i];
             float a = c.a + d.a * (1 - c.a);
             _buf[i] = a <= 0 ? Color.clear
@@ -61,14 +70,15 @@ namespace CubeDash.View
         public void FillRect(double x, double y, double w, double h, uint color, float alpha = 1f)
         {
             Color c = Px.C(color, alpha);
-            for (int yy = (int)y; yy < (int)(y + h); yy++)
-                for (int xx = (int)x; xx < (int)(x + w); xx++)
+            for (int yy = (int)(y * SS); yy < (int)((y + h) * SS); yy++)
+                for (int xx = (int)(x * SS); xx < (int)((x + w) * SS); xx++)
                     Blend(xx, yy, c);
         }
 
         public void FillTriangle(double x1, double y1, double x2, double y2, double x3, double y3,
             uint color, float alpha = 1f)
         {
+            x1 *= SS; y1 *= SS; x2 *= SS; y2 *= SS; x3 *= SS; y3 *= SS;
             Color c = Px.C(color, alpha);
             int minX = Mathf.FloorToInt(Mathf.Min((float)x1, (float)x2, (float)x3));
             int maxX = Mathf.CeilToInt(Mathf.Max((float)x1, (float)x2, (float)x3));
@@ -89,6 +99,7 @@ namespace CubeDash.View
 
         public void FillCircle(double cx, double cy, double r, uint color, float alpha = 1f)
         {
+            cx *= SS; cy *= SS; r *= SS;
             Color c = Px.C(color, alpha);
             for (int yy = (int)(cy - r) - 1; yy <= cy + r + 1; yy++)
                 for (int xx = (int)(cx - r) - 1; xx <= cx + r + 1; xx++)
@@ -100,10 +111,43 @@ namespace CubeDash.View
                 }
         }
 
+        public void FillEllipse(double cx, double cy, double rx, double ry, uint color, float alpha = 1f)
+        {
+            cx *= SS; cy *= SS; rx *= SS; ry *= SS;
+            Color c = Px.C(color, alpha);
+            double edge = System.Math.Min(rx, ry);
+            for (int yy = (int)(cy - ry) - 1; yy <= cy + ry + 1; yy++)
+                for (int xx = (int)(cx - rx) - 1; xx <= cx + rx + 1; xx++)
+                {
+                    double dx = (xx + 0.5 - cx) / rx, dy = (yy + 0.5 - cy) / ry;
+                    double cover = (1 - System.Math.Sqrt(dx * dx + dy * dy)) * edge + 0.5;
+                    if (cover >= 1) Blend(xx, yy, c);
+                    else if (cover > 0) Blend(xx, yy, new Color(c.r, c.g, c.b, c.a * (float)cover));
+                }
+        }
+
+        /// <summary>Radial glow: solid-color falloff (1-d)² — used with the
+        /// additive material for neon/emissive accents.</summary>
+        public void FillRadialGlow(double cx, double cy, double r, uint color)
+        {
+            cx *= SS; cy *= SS; r *= SS;
+            Color c = Px.C(color);
+            for (int yy = (int)(cy - r) - 1; yy <= cy + r + 1; yy++)
+                for (int xx = (int)(cx - r) - 1; xx <= cx + r + 1; xx++)
+                {
+                    double dist = System.Math.Sqrt(
+                        (xx + 0.5 - cx) * (xx + 0.5 - cx) + (yy + 0.5 - cy) * (yy + 0.5 - cy)) / r;
+                    if (dist >= 1) continue;
+                    float f = (float)((1 - dist) * (1 - dist));
+                    Blend(xx, yy, new Color(c.r, c.g, c.b, f));
+                }
+        }
+
         public void StrokeCircle(double cx, double cy, double r, double width, uint color, float alpha = 1f)
         {
+            cx *= SS; cy *= SS; r *= SS;
+            double half = width * SS / 2;
             Color c = Px.C(color, alpha);
-            double half = width / 2;
             for (int yy = (int)(cy - r - half) - 1; yy <= cy + r + half + 1; yy++)
                 for (int xx = (int)(cx - r - half) - 1; xx <= cx + r + half + 1; xx++)
                 {
@@ -119,6 +163,7 @@ namespace CubeDash.View
         /// (repeated blending of an opaque color is idempotent).</summary>
         public void Line(double x1, double y1, double x2, double y2, double width, uint color)
         {
+            x1 *= SS; y1 *= SS; x2 *= SS; y2 *= SS; width *= SS;
             Color c = Px.C(color, 1f);
             double len = System.Math.Max(1, System.Math.Sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1)));
             for (double t = 0; t <= len; t += 0.5)
@@ -131,9 +176,9 @@ namespace CubeDash.View
             }
         }
 
-        public Texture2D ToTexture(FilterMode filter = FilterMode.Point)
+        public Texture2D ToTexture(FilterMode filter = FilterMode.Bilinear)
         {
-            var tex = new Texture2D(W, H, TextureFormat.RGBA32, false)
+            var tex = new Texture2D(_bw, _bh, TextureFormat.RGBA32, false)
             {
                 filterMode = filter,
                 wrapMode = TextureWrapMode.Repeat,
@@ -143,10 +188,11 @@ namespace CubeDash.View
             return tex;
         }
 
-        /// <summary>Pivot in normalized (0-1), y-up like Unity expects.</summary>
-        public Sprite ToSprite(Vector2? pivot = null, FilterMode filter = FilterMode.Point) =>
-            Sprite.Create(ToTexture(filter), new Rect(0, 0, W, H),
-                pivot ?? new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
+        /// <summary>Pivot in normalized (0-1), y-up like Unity expects. The
+        /// sprite's world size equals the LOGICAL canvas size (PPU = SS).</summary>
+        public Sprite ToSprite(Vector2? pivot = null, FilterMode filter = FilterMode.Bilinear) =>
+            Sprite.Create(ToTexture(filter), new Rect(0, 0, _bw, _bh),
+                pivot ?? new Vector2(0.5f, 0.5f), SS, 0, SpriteMeshType.FullRect);
     }
 
     /// <summary>Shared primitive sprites + sprite object helpers.</summary>
@@ -154,6 +200,8 @@ namespace CubeDash.View
     {
         private static Sprite _white;
         private static Sprite _circle;
+        private static Sprite _glow;
+        private static Material _additive;
         private static readonly Dictionary<string, Sprite> Cache = new();
 
         public static Sprite White()
@@ -174,7 +222,7 @@ namespace CubeDash.View
             {
                 var p = new Painter(64, 64);
                 p.FillCircle(32, 32, 31, 0xffffff);
-                _circle = p.ToSprite(filter: FilterMode.Bilinear);
+                _circle = p.ToSprite();
             }
             return _circle;
         }
@@ -186,10 +234,46 @@ namespace CubeDash.View
             {
                 var p = new Painter(diameter + stroke * 2, diameter + stroke * 2);
                 p.StrokeCircle(p.W / 2.0, p.H / 2.0, diameter / 2.0, stroke, 0xffffff);
-                s = p.ToSprite(filter: FilterMode.Bilinear);
+                s = p.ToSprite();
                 Cache[key] = s;
             }
             return s;
+        }
+
+        /// <summary>Soft radial falloff sprite (white, 128px logical).</summary>
+        public static Sprite Glow()
+        {
+            if (_glow == null)
+            {
+                var p = new Painter(128, 128);
+                p.FillRadialGlow(64, 64, 63, 0xffffff);
+                _glow = p.ToSprite();
+            }
+            return _glow;
+        }
+
+        /// <summary>Additive blending for neon/emissive glow layers.</summary>
+        public static Material Additive()
+        {
+            if (_additive == null)
+                _additive = new Material(Shader.Find("Legacy Shaders/Particles/Additive"));
+            return _additive;
+        }
+
+        /// <summary>Additive radial glow stretched to w×h — the "pop" layer
+        /// behind emissive elements. Tint carries the color; alpha the strength.</summary>
+        public static GameObject GlowSprite(Transform parent, string name, double w, double h,
+            uint color, float alpha, int order)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = Glow();
+            sr.sharedMaterial = Additive();
+            sr.color = Px.C(color, alpha);
+            sr.sortingOrder = order;
+            go.transform.localScale = new Vector3((float)w / 128f, (float)h / 128f, 1f);
+            return go;
         }
 
         /// <summary>Solid-color quad; w/h in px, position set by caller.</summary>

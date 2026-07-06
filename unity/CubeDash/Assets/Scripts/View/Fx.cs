@@ -14,7 +14,8 @@ namespace CubeDash.View
         {
             if (_mat == null)
             {
-                _mat = new Material(Shader.Find("Sprites/Default"));
+                // Additive square dots: particles glow instead of just tinting.
+                _mat = new Material(Shader.Find("Legacy Shaders/Particles/Additive"));
                 _mat.mainTexture = Draw.White().texture;
             }
             return _mat;

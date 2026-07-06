@@ -4,17 +4,20 @@ using UnityEngine;
 namespace CubeDash.Game
 {
     /// <summary>
-    /// No authored scenes: runs on play in ANY scene and builds the game from
-    /// code. Orthographic camera, 1 unit = 1 px of a 720x1280 reference view.
+    /// No authored scenes: this runs on play in ANY scene and builds the whole
+    /// game from code, mirroring how the Phaser build constructs itself in
+    /// create(). Camera is orthographic with 1 unit = 1 px of the web build's
+    /// 720x1280 canvas.
     /// </summary>
     public static class Bootstrap
     {
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Init()
         {
-            if (Object.FindAnyObjectByType<MenuController>() != null ||
-                Object.FindAnyObjectByType<RunController>() != null) return;
+            if (Object.FindFirstObjectByType<MenuController>() != null) return;
 
+            // Crispness: MSAA smooths rotated quad edges (diamonds, gems,
+            // pickups); textures are supersampled separately (Painter.SS).
             QualitySettings.antiAliasing = 8;
             Application.targetFrameRate = 120;
 
@@ -43,7 +46,7 @@ namespace CubeDash.Game
         }
     }
 
-    /// <summary>Keeps the view 9:16 whatever the window shape.</summary>
+    /// <summary>Keeps the view 9:16 whatever the window shape (pillar/letterbox).</summary>
     public sealed class AspectFitter : MonoBehaviour
     {
         private Camera _cam;
@@ -68,17 +71,20 @@ namespace CubeDash.Game
     }
 
     /// <summary>Scene-free screen switching: each screen lives under one root
-    /// GameObject; swapping destroys the old tree.</summary>
+    /// GameObject; swapping destroys the old tree (world objects + canvas).</summary>
     public static class Flow
     {
         private static GameObject _current;
 
-        public static void ToMenu() => Swap("menu").AddComponent<MenuController>();
+        public static void ToMenu()
+        {
+            Swap("menu").AddComponent<MenuController>();
+        }
 
         public static void ToGame(int level)
         {
-            var rc = Swap("run").AddComponent<RunController>();
-            rc.Level = level;
+            var gc = Swap("game").AddComponent<GameController>();
+            gc.Level = level;
         }
 
         private static GameObject Swap(string name)

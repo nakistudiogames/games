@@ -127,12 +127,20 @@ namespace CubeDash.Game
             fade.transform.position = Px.V(0, GROUND_Y);
             fade.transform.localScale = new Vector3(Px.WIDTH / 2f, (Px.HEIGHT - (float)GROUND_Y) / 64f, 1f);
 
-            // Neon edge on the ground in the level accent color.
+            // Neon edge on the ground in the level accent color, with an
+            // additive horizon glow so the track line really pops.
             uint accent = LevelColor(Level);
+            var neon = Draw.GlowSprite(transform, "edgeNeon", 1000, 64, accent, 0.5f, 50);
+            neon.transform.position = Px.V(360, GROUND_Y - 4);
             var glow = Draw.Quad(transform, "edgeGlow", Px.WIDTH, 10, accent, 50, 0.12f);
             glow.transform.position = Px.V(360, GROUND_Y - 5);
-            var edge = Draw.Quad(transform, "edge", Px.WIDTH, 5, accent, 50);
+            var edge = Draw.Quad(transform, "edge", Px.WIDTH, 5, accent, 51);
             edge.transform.position = Px.V(360, GROUND_Y - 0.5);
+
+            // Vignette focuses the eye and deepens contrast at the borders.
+            var vig = Draw.FromSprite(transform, "vignette", TextureFactory.Vignette(), 95);
+            vig.transform.position = Px.V(360, 640);
+            vig.transform.localScale = new Vector3(Px.WIDTH / 180f, Px.HEIGHT / 180f, 1f);
         }
 
         private void BuildPlayer()
@@ -141,6 +149,10 @@ namespace CubeDash.Game
             _player = new GameObject("player");
             _player.transform.SetParent(transform, false);
             _player.transform.position = Px.V(PLAYER_X + s / 2, GROUND_Y - s / 2);
+
+            // Soft emissive rim in the skin's aura color, behind the body —
+            // gives the character presence against the dark backdrop.
+            Draw.GlowSprite(_player.transform, "rimGlow", s + 76, s + 76, _spec.AuraColor, 0.3f, 97);
 
             // Gold overlay shown only while double-jump is active — distinct
             // from the character's always-on signature aura.
@@ -502,6 +514,7 @@ namespace CubeDash.Game
             var root = new GameObject("powerup");
             root.transform.SetParent(transform, false);
             root.transform.position = Px.V(p.X, p.Y);
+            Draw.GlowSprite(root.transform, "glow", 120, 120, 0xffd54f, 0.5f, 84);
             var spinner = new GameObject("spin");
             spinner.transform.SetParent(root.transform, false);
             var back = Draw.Quad(spinner.transform, "edge", 46, 46, 0xffffff, 85, 0.9f);

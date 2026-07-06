@@ -155,12 +155,12 @@ namespace CubeDash.View
                 return p.ToSprite(TopLeft);
             });
             Draw.FromSprite(root, "body", sprite, ORDER);
-            // Heat shimmer rising out of the trench.
-            var glow = Draw.Quad(root, "glow", w - 10, 10, 0xff7043, ORDER + 1, 0.35f);
-            glow.transform.localPosition = Px.L(w / 2, h - 2);
+            // Heat glow breathing out of the trench.
+            var glow = Draw.GlowSprite(root, "glow", w + 40, 60, 0xff7043, 0.55f, ORDER + 1);
+            glow.transform.localPosition = Px.L(w / 2, h + 8);
             var pulse = glow.AddComponent<PulseBehaviour>();
-            pulse.FromAlpha = 0.35f; pulse.ToAlpha = 0.1f;
-            pulse.FromScaleY = 1f; pulse.ToScaleY = 1.8f;
+            pulse.FromAlpha = 0.55f; pulse.ToAlpha = 0.25f;
+            pulse.FromScaleY = 1f; pulse.ToScaleY = 1.5f;
             pulse.HalfPeriod = 0.52f;
         }
 
@@ -185,6 +185,8 @@ namespace CubeDash.View
                 p.FillCircle(c + 2, c + 2, r - 21, 0x4a148c);
                 return p.ToSprite(); // center pivot: it spins
             });
+            Draw.GlowSprite(root, "glow", w + 46, w + 46, 0xab47bc, 0.4f, ORDER - 1)
+                .transform.localPosition = Px.L(r, r);
             var body = Draw.FromSprite(root, "body", sprite, ORDER);
             body.transform.localPosition = Px.L(r, r);
             body.AddComponent<SpinBehaviour>().DegreesPerSec = -360f / 2.6f;
@@ -198,6 +200,9 @@ namespace CubeDash.View
 
         private static void BuildLaser(Transform root, float w, float h)
         {
+            // Plasma halo behind the beam — the additive layer sells the light.
+            Draw.GlowSprite(root, "halo", 80, h + 40, 0x76ff03, 0.6f, ORDER - 1)
+                .transform.localPosition = Px.L(w / 2, h / 2);
             var beamSprite = Cached($"laserBeam-{w}x{h}", () =>
             {
                 var p = new Painter((int)w + 8, (int)h);
@@ -230,6 +235,9 @@ namespace CubeDash.View
         {
             var root = new GameObject("finish");
             root.transform.SetParent(parent, false);
+            var glow = Draw.GlowSprite(root.transform, "poleGlow", 90, 470,
+                RunnerLogic.LevelColor(1), 0.4f, ORDER - 1);
+            glow.transform.localPosition = Px.L(0, -210);
             var back = Draw.Quad(root.transform, "poleBack", 26, 420, 0x0c0e14, ORDER, 0.6f);
             back.transform.localPosition = Px.L(0, -210); // pole rises from ground
             var pole = Draw.Quad(root.transform, "pole", 8, 420, RunnerLogic.LevelColor(1), ORDER + 1);
@@ -250,6 +258,8 @@ namespace CubeDash.View
         {
             var pole = finish.transform.Find("pole");
             if (pole != null) pole.GetComponent<SpriteRenderer>().color = Px.C(accent);
+            var glow = finish.transform.Find("poleGlow");
+            if (glow != null) glow.GetComponent<SpriteRenderer>().color = Px.C(accent, 0.4f);
         }
     }
 

@@ -133,22 +133,33 @@ games/cube-dash    Game #5, browser-playable. Geometry-Dash-style auto-runner
                    spawn 2400-4000px apart in obstacle-free spots, first at
                    1500px): doubleJump = 10s of one extra air jump, recharged
                    on landing; gold diamond pickup, aura + "⇈ Ns" badge.
-unity/CubeDash  UNITY PORT of cube-dash for an engine comparison (2026-07-05):
-                full gameplay parity, no ads, editor-only. NOT in npm
-                workspaces. All C# written; NOT yet compiled/verified — Unity
-                is not installed (user step: docs/unity-compare-setup.md; then
-                update ProjectSettings/ProjectVersion.txt to their version and
-                run EditMode tests headless — command in that doc). Structure
-                mirrors the web build: Assets/Scripts/Logic (pure C# ports of
-                runner/characters/worlds + bit-exact Mulberry32 — same seeds
-                => same layouts, proven by RngParityTests fixtures generated
-                from the TS impl), View (all textures painted at runtime via
-                Painter, aura MonoBehaviours), Game (Bootstrap spawns
-                everything into an empty scene — no authored scene assets;
-                Flow/GameController/MenuController; PlayerPrefs uses the SAME
-                storage keys), Audio (OnAudioFilterRead synth port of the
-                16-step MusicPlayer + sfx blips). Logic space stays y-DOWN
-                720x1280 pixels; the view layer flips y once (Px.V).
+unity/CubeDash  NATIVE Unity rebuild of cube-dash (2026-07-05, v2): after the
+                1:1 port felt clunky, the game was REBUILT Unity-natively —
+                same characters/auras/worlds/music, new everything else. NOT in
+                npm workspaces; no ads; editor-only (Unity 6000.5.2f1
+                installed). The v1 port lives in Archive~/v1-port (Unity
+                ignores ~ folders); its docs are docs/unity-compare-setup.md.
+                v2 design: y-UP sim, PLAYER moves through a PRE-BUILT fixed
+                level (whole layout built at Start from Chunks.Build(level)),
+                camera follows with look-ahead + landing kick + height damp;
+                feel systems: squash & stretch (Tween.Punch), coyote 80ms,
+                jump buffer 120ms, hold-to-float apex (gravity x0.78 near
+                apex), GD-style half-flip driven by arc progress, hit-stop +
+                slow-mo deaths, tap-anywhere instant retry w/ session ATTEMPT
+                counter. Logic (asmdef CubeDash.Logic, pure): Sim.cs
+                (gravity 5200/jumpV 1500, apex≈216px), Chunks.cs (authored
+                chunk library, tiers 0-3 unlock at levels 1/3/5/7, gaps in
+                the ground are a new hazard, seeded via level*0x9E3779B9,
+                clearability invariants tested). Kinds: Spike/Block/Saw/Mine/
+                Beam/Slab (ObstacleArt.cs). Kept from v1: Mulberry32 (still
+                bit-exact w/ web rng), CharacterData/WorldData,
+                CharacterFactory/Auras, TextureFactory (+ ScrollingTiled now
+                LOCAL-space for camera-parented parallax), Painter (SS=3
+                supersampling), Fx (additive), AudioEngine synth, UiFactory,
+                same PlayerPrefs keys. Tests: Assets/Tests/EditMode/SimTests
+                .cs (~14 tests). Batchmode tests CANNOT run while the editor
+                has the project open (single-instance lock); v2 was written
+                after v1 verified green but v2 itself pends its first compile.
 docs/           Runbooks — phase-0-setup.md is the user's account/toolchain checklist;
                 unity-compare-setup.md is the Unity Hub/editor install checklist
 ```
