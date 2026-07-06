@@ -1,10 +1,13 @@
 import Phaser from "phaser";
 import { GameStorage } from "@mg/core";
 import { textButton } from "@mg/ui";
-import { levelColor, levelDurationSec } from "../logic/runner";
+import { KIND_UNLOCK_LEVEL, LEVELS_PER_WORLD, levelColor, levelDurationSec } from "../logic/runner";
+import type { ObstacleKind } from "../logic/runner";
 import { worldForLevel } from "../worlds";
 import { CHARACTERS, characterById, isCharacterUnlocked } from "../characters";
 import { attachAura, buildCharacterParts } from "../characterView";
+import { OBSTACLE_INFO } from "../obstacles";
+import { OBSTACLE_PREVIEW, buildObstaclePreview } from "../obstacleView";
 
 export const storage = new GameStorage("cube-dash");
 
@@ -49,6 +52,17 @@ export class MenuScene extends Phaser.Scene {
     const { width, height } = this.scale;
     const unlocked = this.unlockedLevel();
     this.selected = Math.min(storage.get("lastPlayed", 1), unlocked);
+
+    // Obstacle encyclopedia — every hazard met so far, plus teasers ahead.
+    textButton(
+      this,
+      110,
+      56,
+      "📖 GUIDE",
+      { text: "#8a93a8", background: "#181d2b" },
+      () => this.openEncyclopedia(),
+      "26px",
+    );
 
     // Dev-only god mode toggle (never rendered off the Vite dev server).
     if (godModeAvailable()) {
@@ -277,6 +291,130 @@ export class MenuScene extends Phaser.Scene {
           });
         }
       }
+      pageText.setText(pages > 1 ? `page ${page + 1} / ${pages}` : "");
+    };
+
+    if (pages > 1) {
+      overlay.add(
+        textButton(this, width / 2 - 150, height - 165, "◀", { text: "#ffffff", background: "#232b3e" }, () => {
+          page = Math.max(0, page - 1);
+          renderPage();
+        }, "32px"),
+      );
+      overlay.add(
+        textButton(this, width / 2 + 150, height - 165, "▶", { text: "#ffffff", background: "#232b3e" }, () => {
+          page = Math.min(pages - 1, page + 1);
+          renderPage();
+        }, "32px"),
+      );
+    }
+    overlay.add(
+      textButton(
+        this,
+        width / 2,
+        height - 80,
+        "✕  CLOSE",
+        { text: "#ef9a9a", background: "#331e1e" },
+        () => overlay.destroy(),
+        "34px",
+      ),
+    );
+    renderPage();
+  }
+
+  /**
+   * Overlay listing every obstacle kind in unlock order, with live art from
+   * obstacleView. Kinds beyond the player's progress show as "???" teasers
+   * (god mode reveals everything, like it unlocks every level).
+   */
+  private openEncyclopedia(): void {
+    const { width, height } = this.scale;
+    const unlocked = this.unlockedLevel();
+    const kinds = (Object.entries(KIND_UNLOCK_LEVEL) as Array<[ObstacleKind, number]>).sort(
+      (a, b) => a[1] - b[1],
+    );
+    const perPage = 5;
+    const pages = Math.ceil(kinds.length / perPage);
+    let page = 0;
+
+    const overlay = this.add.container(0, 0).setDepth(100);
+    overlay.add(
+      this.add.rectangle(0, 0, width, height, 0x0b0e18, 0.95).setOrigin(0).setInteractive(),
+    );
+    overlay.add(
+      this.add
+        .text(width / 2, 150, "OBSTACLES", {
+          fontFamily: "Arial Black, sans-serif",
+          fontSize: "52px",
+          color: "#ffffff",
+        })
+        .setOrigin(0.5)
+        .setShadow(0, 6, "#000000", 8, false, true),
+    );
+    const rows = this.add.container(0, 0);
+    overlay.add(rows);
+    const pageText = this.add
+      .text(width / 2, height - 165, "", {
+        fontFamily: "Arial, sans-serif",
+        fontSize: "30px",
+        color: "#8a93a8",
+      })
+      .setOrigin(0.5);
+    overlay.add(pageText);
+
+    const renderPage = (): void => {
+      rows.removeAll(true);
+      kinds.slice(page * perPage, (page + 1) * perPage).forEach(([kind, lvl], i) => {
+        const y = 320 + i * 168;
+        const worldN = Math.floor((lvl - 1) / LEVELS_PER_WORLD) + 1;
+        const isKnown = lvl <= unlocked;
+        const info = OBSTACLE_INFO[kind];
+
+        rows.add(
+          this.add
+            .rectangle(width / 2, y, 660, 156, 0x161b29)
+            .setStrokeStyle(2, isKnown ? 0x2a3350 : 0x1c2233),
+        );
+
+        // Live-art preview, scaled to fit the left column of the card.
+        const spec = OBSTACLE_PREVIEW[kind];
+        const visualH = kind === "pit" ? spec.h + 150 : spec.h; // trench digs down
+        const scale = Math.min(1, 116 / visualH, 150 / spec.w);
+        const pv = buildObstaclePreview(this, kind)
+          .setScale(scale)
+          .setPosition(130 - (spec.w * scale) / 2, y - (visualH * scale) / 2);
+        if (!isKnown) pv.setAlpha(0.15);
+        rows.add(pv);
+
+        const hex = `#${levelColor(lvl).toString(16).padStart(6, "0")}`;
+        rows.add(
+          this.add
+            .text(240, y - 56, isKnown ? info.name : "???", {
+              fontFamily: "Arial Black, sans-serif",
+              fontSize: "32px",
+              color: isKnown ? hex : "#5c667d",
+            })
+            .setOrigin(0, 0.5),
+        );
+        rows.add(
+          this.add
+            .text(668, y - 56, `world ${worldN}`, {
+              fontFamily: "Arial, sans-serif",
+              fontSize: "24px",
+              color: "#5c667d",
+            })
+            .setOrigin(1, 0.5),
+        );
+        rows.add(
+          this.add.text(240, y - 34, isKnown ? info.blurb : `Reach world ${worldN} to identify this hazard.`, {
+            fontFamily: "Arial, sans-serif",
+            fontSize: "23px",
+            color: isKnown ? "#aab3c7" : "#5c667d",
+            wordWrap: { width: 428 },
+            lineSpacing: 4,
+          }),
+        );
+      });
       pageText.setText(pages > 1 ? `page ${page + 1} / ${pages}` : "");
     };
 

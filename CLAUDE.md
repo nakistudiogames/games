@@ -124,6 +124,14 @@ games/cube-dash    Game #5, browser-playable. Geometry-Dash-style auto-runner
                    runway. HUD: % progress + top progress bar. Storage keys:
                    "unlockedLevel", "lastPlayed", "bestPct:<n>", "character",
                    "godMode" ("highScore"/"bestLevel" are legacy, unused).
+                   Obstacle encyclopedia: 📖 GUIDE button in the menu → paged
+                   overlay of all kinds in unlock order; entries (name+blurb)
+                   are pure data in src/obstacles.ts (Record<ObstacleKind,…>
+                   + test force an entry per kind); art shared with the game
+                   via src/obstacleView.ts (drawObstacle/buildObstaclePreview
+                   — GameScene's draw methods were extracted there, same
+                   pattern as characterView); kinds beyond unlockedLevel show
+                   as "??? / reach world N" teasers.
                    God mode: dev-only toggle button in the menu, rendered and
                    effective ONLY when location.host === "localhost:5173"
                    (godModeAvailable/godModeOn in MenuScene.ts) — unlocks all
@@ -196,7 +204,7 @@ npm run dev:2048   # merge-2048 on Vite dev server
 npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
-npm test           # vitest (15 + 12 + 9 + 8 + 65 = 109 tests, all green)
+npm test           # vitest (15 + 12 + 9 + 8 + 67 = 111 tests, all green)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)
 ```
