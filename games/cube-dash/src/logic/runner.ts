@@ -1,4 +1,4 @@
-import type { Rng } from "@mg/core";
+import { Rng } from "@mg/core";
 
 /** World units are game pixels (720x1280 canvas). y grows downward. */
 export const GROUND_Y = 1000;
@@ -31,7 +31,17 @@ export interface Runner {
  * bobbing up/down as it scrolls) world 4, laser (thin tall pylon beam) world 5,
  * geyser (vent whose flame column erupts on a fixed cycle) world 6, tentacle
  * (thin tall stalk swaying sideways) world 7, arc (wide low lightning span —
- * one full-commitment jump) world 8.
+ * one full-commitment jump) world 8, phantom (crystal phasing solid/ghost)
+ * world 9, vine (stalk whose lash height oscillates) world 10, gear (cog
+ * patrolling ±x along the ground) world 11, gate (twin energy bars — jump
+ * through the window between) world 12, crusher (wide slab bobbing in the
+ * swing band) world 13, urchin (static floating spike ball, jump-over only)
+ * world 14, talon (buried claw erupting on a cycle) world 15, drone (hovering
+ * patroller, always run-under-able) world 16, obelisk (tall monolith, the
+ * most precise jump) world 17, flare (wide ground fire ribbon, the longest
+ * committed jump) world 18, comet (fireball descending along the track,
+ * grounded by the time it reaches the player) world 19, reaper (scythe blade
+ * sweeping the track on a cycle) world 20.
  */
 export type ObstacleKind =
   | "spike"
@@ -42,7 +52,19 @@ export type ObstacleKind =
   | "laser"
   | "geyser"
   | "tentacle"
-  | "arc";
+  | "arc"
+  | "phantom"
+  | "vine"
+  | "gear"
+  | "gate"
+  | "crusher"
+  | "urchin"
+  | "talon"
+  | "drone"
+  | "obelisk"
+  | "flare"
+  | "comet"
+  | "reaper";
 
 export interface Obstacle {
   /** Left edge in world pixels (scrolls toward the player). */
@@ -94,6 +116,96 @@ export function tentacleSway(o: Obstacle): number {
 }
 
 // ---------------------------------------------------------------------------
+// Worlds 9-20 obstacle motion. All of it follows the swing/geyser doctrine:
+// state is a pure function of the obstacle's x (plus its seeded phase), so
+// layouts stay deterministic and memorizable, and clearability is provable.
+
+/** On/off cycle shared by phantom, talon and reaper (≈half duty). */
+function cycleOn(o: Obstacle, freq: number): boolean {
+  return Math.sin(o.x * freq + (o.phase ?? 0)) > 0;
+}
+
+export const PHANTOM_FREQ = (2 * Math.PI) / 650;
+/** True while the phantom crystal is solid (lethal); ghost form is harmless. */
+export function phantomSolid(o: Obstacle): boolean {
+  return cycleOn(o, PHANTOM_FREQ);
+}
+
+// Vine lash height oscillates 40..140 — always fits under a jump (see test).
+export const VINE_MID = 90;
+export const VINE_AMP = 50;
+export const VINE_FREQ = (2 * Math.PI) / 460;
+/** Current lash height of a vine above the ground. */
+export function vineHeight(o: Obstacle): number {
+  return VINE_MID + VINE_AMP * Math.sin(o.x * VINE_FREQ + (o.phase ?? 0));
+}
+
+// Gear patrols ±40px along the ground around its anchor.
+export const GEAR_SHIFT_AMP = 40;
+export const GEAR_FREQ = (2 * Math.PI) / 520;
+/** Current sideways offset of a gear from its anchor x. */
+export function gearShift(o: Obstacle): number {
+  return GEAR_SHIFT_AMP * Math.sin(o.x * GEAR_FREQ + (o.phase ?? 0));
+}
+
+// Gate: bottom bar up to 40, window 40..170 (fits the 60px player mid-jump),
+// top bar 170..300. One obstacle spec (h = GATE_TOP) describes both bars.
+export const GATE_GAP_LO = 40;
+export const GATE_GAP_HI = 170;
+export const GATE_TOP = 300;
+
+// Crusher bobs in the swing band [10, 130]: same overlap invariant — low
+// enough to jump over, or high enough (≥80) to run under.
+export const CRUSHER_FREQ = (2 * Math.PI) / 560;
+/** Current bottom-edge height of a crusher slab above the ground. */
+export function crusherElev(o: Obstacle): number {
+  return SWING_MID + SWING_AMP * Math.sin(o.x * CRUSHER_FREQ + (o.phase ?? 0));
+}
+
+/** Urchin floats at a fixed height; its top stays inside single-jump reach. */
+export const URCHIN_ELEV = 40;
+
+export const TALON_FREQ = (2 * Math.PI) / 720;
+/** True while the buried talon is erupted (lethal at track level). */
+export function talonActive(o: Obstacle): boolean {
+  return cycleOn(o, TALON_FREQ);
+}
+
+// Drone hovers in [80, 130] (always run-under-able) while drifting ±40px.
+export const DRONE_ELEV_MID = 105;
+export const DRONE_ELEV_AMP = 25;
+export const DRONE_ELEV_FREQ = (2 * Math.PI) / 480;
+export const DRONE_SHIFT_AMP = 40;
+export const DRONE_SHIFT_FREQ = (2 * Math.PI) / 380;
+export function droneElev(o: Obstacle): number {
+  return DRONE_ELEV_MID + DRONE_ELEV_AMP * Math.sin(o.x * DRONE_ELEV_FREQ + (o.phase ?? 0));
+}
+export function droneShift(o: Obstacle): number {
+  return DRONE_SHIFT_AMP * Math.sin(o.x * DRONE_SHIFT_FREQ + (o.phase ?? 0) * 1.7);
+}
+
+// Comet descends along the track and is grounded from COMET_IMPACT_X on —
+// well before it reaches the player (PLAYER_X + PLAYER_SIZE = 240).
+export const COMET_IMPACT_X = 480;
+export const COMET_SLOPE = 0.55;
+/** Current bottom-edge height of a comet above the ground. */
+export function cometElev(o: Obstacle): number {
+  return Math.max(0, COMET_SLOPE * (o.x - COMET_IMPACT_X));
+}
+
+export const REAPER_FREQ = (2 * Math.PI) / 600;
+/** True while the reaper's blade sweeps the track (lethal). */
+export function reaperActive(o: Obstacle): boolean {
+  return cycleOn(o, REAPER_FREQ);
+}
+
+/** Kinds whose motion/state uses a seeded phase, assigned at spawn. */
+export const KINDS_WITH_PHASE: ReadonlySet<ObstacleKind> = new Set([
+  "swing", "geyser", "tentacle",
+  "phantom", "vine", "gear", "crusher", "talon", "drone", "reaper",
+]);
+
+// ---------------------------------------------------------------------------
 // Level system: discrete, selectable levels. Each is a fixed-length run with
 // a finish line; clearing it unlocks the next. Difficulty and layout are a
 // function of the level number, and the layout is seeded so every attempt at
@@ -137,12 +249,11 @@ export function levelGapScale(level: number): number {
   return Math.max(0.75, 1.2 - 0.06 * (level - 1));
 }
 
-/**
- * Accent color per WORLD (5 levels each), cycling: teal, green, orange,
- * ice blue, lime, amber, indigo, magenta — one per world theme.
- */
+/** Accent color per WORLD (5 levels each), cycling — one per world theme. */
 export const LEVEL_COLORS: readonly number[] = [
   0x4dd0e1, 0x66bb6a, 0xff7043, 0x90caf9, 0xc0ca33, 0xffca28, 0x7986cb, 0xea80fc,
+  0xeceff1, 0x81c784, 0xffab40, 0x40c4ff, 0xb388ff, 0xff8a80, 0xd7ccc8, 0x69f0ae,
+  0x7e57c2, 0xffd740, 0xf48fb1, 0x00e5ff,
 ];
 
 export function levelColor(level: number): number {
@@ -168,6 +279,18 @@ export const KIND_UNLOCK_LEVEL: Record<ObstacleKind, number> = {
   geyser: 1 + LEVELS_PER_WORLD * 5, // world 6
   tentacle: 1 + LEVELS_PER_WORLD * 6, // world 7
   arc: 1 + LEVELS_PER_WORLD * 7, // world 8
+  phantom: 1 + LEVELS_PER_WORLD * 8, // world 9
+  vine: 1 + LEVELS_PER_WORLD * 9, // world 10
+  gear: 1 + LEVELS_PER_WORLD * 10, // world 11
+  gate: 1 + LEVELS_PER_WORLD * 11, // world 12
+  crusher: 1 + LEVELS_PER_WORLD * 12, // world 13
+  urchin: 1 + LEVELS_PER_WORLD * 13, // world 14
+  talon: 1 + LEVELS_PER_WORLD * 14, // world 15
+  drone: 1 + LEVELS_PER_WORLD * 15, // world 16
+  obelisk: 1 + LEVELS_PER_WORLD * 16, // world 17
+  flare: 1 + LEVELS_PER_WORLD * 17, // world 18
+  comet: 1 + LEVELS_PER_WORLD * 18, // world 19
+  reaper: 1 + LEVELS_PER_WORLD * 19, // world 20
 };
 
 export function obstacleKindsForLevel(level: number): ObstacleKind[] {
@@ -247,7 +370,11 @@ export function stepRunner(r: Runner, dtSec: number, support: number): void {
  * run underneath them. Saws and swing mines are round (circle hitbox), pits
  * are lethal only at ground level (jump across), lasers on any beam overlap.
  * Geysers kill only while erupting, tentacles kill where the sway puts them,
- * arcs kill anywhere inside their span below the beam.
+ * arcs kill anywhere inside their span below the beam. Worlds 9-20 kinds
+ * follow the same doctrine: timed kinds (phantom/talon/reaper) kill only in
+ * their active state, moving kinds (vine/gear/crusher/drone/comet) kill where
+ * their motion function currently puts them, gates kill outside the window,
+ * urchins/obelisks/flares are static rects/circles with fairness insets.
  */
 export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boolean {
   const pl = PLAYER_X;
@@ -257,6 +384,64 @@ export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boo
     if (o.kind === "pit") {
       const inset = 22;
       if (bottomY >= GROUND_Y - 2 && pr > o.x + inset && pl < o.x + o.w - inset) return true;
+      continue;
+    }
+    if (o.kind === "phantom" || o.kind === "talon" || o.kind === "reaper") {
+      // Timed hazards: harmless while phased out / retracted.
+      const on =
+        o.kind === "phantom" ? phantomSolid(o) : o.kind === "talon" ? talonActive(o) : reaperActive(o);
+      if (!on) continue;
+      const inset = 6;
+      if (pr > o.x + inset && pl < o.x + o.w - inset && bottomY > GROUND_Y - o.h + 6) {
+        return true;
+      }
+      continue;
+    }
+    if (o.kind === "vine") {
+      // The lash height oscillates — only the current reach kills.
+      const inset = 8;
+      if (pr > o.x + inset && pl < o.x + o.w - inset && bottomY > GROUND_Y - vineHeight(o) + 6) {
+        return true;
+      }
+      continue;
+    }
+    if (o.kind === "gate") {
+      // Twin energy bars; the 130px window between them is the way through.
+      const inset = 6;
+      if (pr > o.x + inset && pl < o.x + o.w - inset) {
+        if (bottomY > GROUND_Y - GATE_GAP_LO + 4) return true; // bottom bar
+        if (bottomY - PLAYER_SIZE < GROUND_Y - GATE_GAP_HI - 4) return true; // top bar
+      }
+      continue;
+    }
+    if (o.kind === "gear" || o.kind === "urchin" || o.kind === "drone") {
+      // Round hazards; gear and drone hitboxes follow their patrol motion.
+      const shift = o.kind === "gear" ? gearShift(o) : o.kind === "drone" ? droneShift(o) : 0;
+      const elev = o.kind === "urchin" ? URCHIN_ELEV : o.kind === "drone" ? droneElev(o) : 0;
+      const r = o.w / 2 - (o.kind === "gear" ? 8 : 6);
+      const cx = o.x + shift + o.w / 2;
+      const cy = GROUND_Y - elev - o.h / 2;
+      const nx = Math.max(pl, Math.min(cx, pr));
+      const ny = Math.max(pt, Math.min(cy, bottomY));
+      if ((nx - cx) ** 2 + (ny - cy) ** 2 < r * r) return true;
+      continue;
+    }
+    if (o.kind === "crusher" || o.kind === "comet") {
+      // Rects whose height above ground is a function of x.
+      const elev = o.kind === "crusher" ? crusherElev(o) : cometElev(o);
+      const inset = 8;
+      const top = GROUND_Y - elev - o.h;
+      if (pr > o.x + inset && pl < o.x + o.w - inset && bottomY > top + 6 && pt < GROUND_Y - elev - 4) {
+        return true;
+      }
+      continue;
+    }
+    if (o.kind === "flare") {
+      // Ground fire ribbon: arc-style — lethal only near track level.
+      const inset = 10;
+      if (pr > o.x + inset && pl < o.x + o.w - inset && bottomY > GROUND_Y - o.h + 8) {
+        return true;
+      }
       continue;
     }
     if (o.kind === "geyser") {
@@ -297,7 +482,7 @@ export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boo
     }
     const top = GROUND_Y - o.elev - o.h;
     const bottom = GROUND_Y - o.elev;
-    if (o.kind === "laser") {
+    if (o.kind === "laser" || o.kind === "obelisk") {
       const inset = 6;
       if (pr > o.x + inset && pl < o.x + o.w - inset && bottomY > top + 6 && pt < bottom) {
         return true;
@@ -554,6 +739,223 @@ export const PATTERNS: readonly Pattern[] = [
     minSpeed: 0,
     minLevel: 38,
   },
+  // --- worlds 9-20: one new kind per world, intro + combo each ---
+  {
+    // Phasing crystal: jump it while solid, or stroll through the ghost.
+    id: "phantom1",
+    obstacles: [{ dx: 0, w: 60, h: 110, kind: "phantom" }],
+    width: 60,
+    minSpeed: 0,
+    minLevel: 41, // world 9
+  },
+  {
+    id: "phantomPair",
+    obstacles: [
+      { dx: 0, w: 60, h: 110, kind: "phantom" },
+      { dx: 440, w: 60, h: 110, kind: "phantom" },
+    ],
+    width: 500,
+    minSpeed: 0,
+    minLevel: 43,
+  },
+  {
+    // Lashing vine: h is the MAX lash height; the live height oscillates.
+    id: "vine1",
+    obstacles: [{ dx: 0, w: 54, h: 140, kind: "vine" }],
+    width: 54,
+    minSpeed: 0,
+    minLevel: 46, // world 10
+  },
+  {
+    id: "vineSaw",
+    obstacles: [
+      { dx: 0, w: 54, h: 140, kind: "vine" },
+      { dx: 430, w: 90, h: 90, kind: "saw" },
+    ],
+    width: 520,
+    minSpeed: 0,
+    minLevel: 48,
+  },
+  {
+    // Patrolling cog: the hitbox wanders ±40px around the anchor.
+    id: "gear1",
+    obstacles: [{ dx: 0, w: 70, h: 70, kind: "gear" }],
+    width: 150, // patrol footprint: w + 2 * GEAR_SHIFT_AMP
+    minSpeed: 0,
+    minLevel: 51, // world 11
+  },
+  {
+    id: "gearPit",
+    obstacles: [
+      { dx: 0, w: 70, h: 70, kind: "gear" },
+      { dx: 470, w: 150, h: 24, kind: "pit" },
+    ],
+    width: 620,
+    minSpeed: 0,
+    minLevel: 53,
+  },
+  {
+    // Energy gate: thread the jump through the window between the bars.
+    id: "gate1",
+    obstacles: [{ dx: 0, w: 24, h: 300, kind: "gate" }],
+    width: 24,
+    minSpeed: 0,
+    minLevel: 56, // world 12
+  },
+  {
+    id: "gateSpike",
+    obstacles: [
+      { dx: 0, w: 24, h: 300, kind: "gate" },
+      { dx: 420, w: 60, h: 60, kind: "spike" },
+    ],
+    width: 480,
+    minSpeed: 0,
+    minLevel: 58,
+  },
+  {
+    // Bobbing slab: swing-band rules — over when low, under when high.
+    id: "crusher1",
+    obstacles: [{ dx: 0, w: 90, h: 60, kind: "crusher" }],
+    width: 90,
+    minSpeed: 0,
+    minLevel: 61, // world 13
+  },
+  {
+    id: "crusherPit",
+    obstacles: [
+      { dx: 0, w: 90, h: 60, kind: "crusher" },
+      { dx: 450, w: 150, h: 24, kind: "pit" },
+    ],
+    width: 600,
+    minSpeed: 0,
+    minLevel: 63,
+  },
+  {
+    // Floating spike ball at fixed height: a clean jump-over, no run-under.
+    id: "urchin1",
+    obstacles: [{ dx: 0, w: 80, h: 80, kind: "urchin" }],
+    width: 80,
+    minSpeed: 0,
+    minLevel: 66, // world 14
+  },
+  {
+    id: "urchinPair",
+    obstacles: [
+      { dx: 0, w: 80, h: 80, kind: "urchin" },
+      { dx: 460, w: 80, h: 80, kind: "urchin" },
+    ],
+    width: 540,
+    minSpeed: 0,
+    minLevel: 68,
+  },
+  {
+    // Buried claw: erupts on a cycle — cross during the lull or jump it.
+    id: "talon1",
+    obstacles: [{ dx: 0, w: 66, h: 120, kind: "talon" }],
+    width: 66,
+    minSpeed: 0,
+    minLevel: 71, // world 15
+  },
+  {
+    id: "talonSaw",
+    obstacles: [
+      { dx: 0, w: 66, h: 120, kind: "talon" },
+      { dx: 450, w: 90, h: 90, kind: "saw" },
+    ],
+    width: 540,
+    minSpeed: 0,
+    minLevel: 73,
+  },
+  {
+    // Hover-drone: drifts but never dips below 80 — always run-under-able.
+    id: "drone1",
+    obstacles: [{ dx: 0, w: 60, h: 60, kind: "drone" }],
+    width: 140, // patrol footprint: w + 2 * DRONE_SHIFT_AMP
+    minSpeed: 0,
+    minLevel: 76, // world 16
+  },
+  {
+    id: "droneSpike",
+    obstacles: [
+      { dx: 0, w: 60, h: 60, kind: "drone" },
+      { dx: 260, w: 60, h: 60, kind: "spike" },
+    ],
+    width: 320,
+    minSpeed: 0,
+    minLevel: 78,
+  },
+  {
+    // Monolith: the tallest solid — the most precise single jump.
+    id: "obelisk1",
+    obstacles: [{ dx: 0, w: 30, h: 150, kind: "obelisk" }],
+    width: 30,
+    minSpeed: 0,
+    minLevel: 81, // world 17
+  },
+  {
+    id: "obeliskRow",
+    obstacles: [
+      { dx: 0, w: 30, h: 150, kind: "obelisk" },
+      { dx: 440, w: 30, h: 150, kind: "obelisk" },
+    ],
+    width: 470,
+    minSpeed: 0,
+    minLevel: 83,
+  },
+  {
+    // Fire ribbon: wider than an arc — the longest committed jump.
+    id: "flare1",
+    obstacles: [{ dx: 0, w: 210, h: 24, kind: "flare" }],
+    width: 210,
+    minSpeed: 0,
+    minLevel: 86, // world 18
+  },
+  {
+    id: "flareUrchin",
+    obstacles: [
+      { dx: 0, w: 210, h: 24, kind: "flare" },
+      { dx: 560, w: 80, h: 80, kind: "urchin" },
+    ],
+    width: 640,
+    minSpeed: 0,
+    minLevel: 88,
+  },
+  {
+    // Comet: streaks down from the sky, grounded well before the player.
+    id: "comet1",
+    obstacles: [{ dx: 0, w: 54, h: 60, kind: "comet" }],
+    width: 54,
+    minSpeed: 0,
+    minLevel: 91, // world 19
+  },
+  {
+    id: "cometPair",
+    obstacles: [
+      { dx: 0, w: 54, h: 60, kind: "comet" },
+      { dx: 430, w: 54, h: 60, kind: "comet" },
+    ],
+    width: 484,
+    minSpeed: 0,
+    minLevel: 93,
+  },
+  {
+    // Sweeping scythe: present/absent at track level on a cycle.
+    id: "reaper1",
+    obstacles: [{ dx: 0, w: 60, h: 90, kind: "reaper" }],
+    width: 60,
+    minSpeed: 0,
+    minLevel: 96, // world 20
+  },
+  {
+    id: "reaperGate",
+    obstacles: [
+      { dx: 0, w: 60, h: 90, kind: "reaper" },
+      { dx: 470, w: 24, h: 300, kind: "gate" },
+    ],
+    width: 494,
+    minSpeed: 0,
+    minLevel: 98,
+  },
 ];
 
 export function pickPattern(rng: Rng, speed: number, level: number): Pattern {
@@ -566,6 +968,74 @@ export function pickPattern(rng: Rng, speed: number, level: number): Pattern {
 /** Breathing room between patterns: reaction time plus one full jump. */
 export function minGapPx(speed: number): number {
   return 0.5 * speed + jumpDistancePx(speed);
+}
+
+// ---------------------------------------------------------------------------
+// Track zones: seeded stretches where the RENDERING flips — "mirror" (world
+// 9+) mirrors the view horizontally so the cube appears to run right-to-left;
+// "flip" (world 13+) mirrors it vertically so the cube runs a ceiling track.
+// Purely visual: physics, layouts and progress are untouched, so every
+// clearability guarantee holds inside a zone.
+
+export type TrackZoneKind = "mirror" | "flip";
+
+export interface TrackZone {
+  /** Distance along the level, in px. */
+  start: number;
+  end: number;
+  kind: TrackZoneKind;
+}
+
+export const MIRROR_MIN_LEVEL = 1 + LEVELS_PER_WORLD * 8; // world 9 (level 41)
+export const FLIP_MIN_LEVEL = 1 + LEVELS_PER_WORLD * 12; // world 13 (level 61)
+
+const ZONE_MIN_PX = 1500;
+const ZONE_MAX_PX = 6000;
+const ZONE_FIRST_PX = 1200;
+/** Zones end at least this far before the finish (clear of the runway). */
+const ZONE_END_CLEAR_PX = 1600;
+const ZONE_GAP_PX = 800;
+
+/**
+ * Zones for a level: 1-2 mirror (level ≥ 41) and 1-2 flip (level ≥ 61),
+ * each 12-20% of the level clamped to [1500, 6000]px, non-overlapping,
+ * ≥800px apart, sorted, never inside the finish runway. Seeded separately
+ * from the layout rng so existing levels' layouts are unchanged.
+ */
+export function trackZones(level: number, lengthPx: number): TrackZone[] {
+  const rng = new Rng((levelSeed(level) ^ 0x51af) >>> 0);
+  const wanted: TrackZoneKind[] = [];
+  if (level >= MIRROR_MIN_LEVEL) {
+    wanted.push("mirror");
+    if (rng.next() < 0.4) wanted.push("mirror");
+  }
+  if (level >= FLIP_MIN_LEVEL) {
+    wanted.push("flip");
+    if (rng.next() < 0.4) wanted.push("flip");
+  }
+  // Seeded shuffle so mirror/flip interleave differently per level.
+  for (let i = wanted.length - 1; i > 0; i--) {
+    const j = Math.floor(rng.next() * (i + 1));
+    [wanted[i], wanted[j]] = [wanted[j]!, wanted[i]!];
+  }
+  const zones: TrackZone[] = [];
+  let cursor = ZONE_FIRST_PX;
+  for (const kind of wanted) {
+    const len = Math.min(ZONE_MAX_PX, Math.max(ZONE_MIN_PX, lengthPx * (0.12 + rng.next() * 0.08)));
+    const start = cursor + rng.next() * 900;
+    if (start + len > lengthPx - ZONE_END_CLEAR_PX) break;
+    zones.push({ start, end: start + len, kind });
+    cursor = start + len + ZONE_GAP_PX;
+  }
+  return zones;
+}
+
+/** The zone kind covering this distance, or null on the normal track. */
+export function zoneKindAt(distancePx: number, zones: readonly TrackZone[]): TrackZoneKind | null {
+  for (const z of zones) {
+    if (distancePx >= z.start && distancePx < z.end) return z.kind;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------

@@ -81,7 +81,38 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    hitbox follows tentacleSway(x) ±24px, worst-case footprint
                    jumpable, tested), arc L36 (200x50 tesla span between twin
                    pylons, always lethal, crackle visual only — forces one
-                   full-commitment jump, single-jump clearability tested).
+                   full-commitment jump, single-jump clearability tested),
+                   then worlds 9-20 (all same pure-fn-of-x doctrine, all
+                   clearability-tested via the airWindowPx helper): phantom
+                   L41 (60x110 crystal phasing solid/ghost, phantomSolid),
+                   vine L46 (54px stalk, lash height 40↔140 via vineHeight),
+                   gear L51 (70px cog patrolling ±40 via gearShift, circle
+                   hitbox), gate L56 (twin bars 0-40 & 170-300 from ONE spec
+                   — jump THROUGH the 130px window), crusher L61 (90x60 slab
+                   bobbing in the swing band [10,130] via crusherElev), urchin
+                   L66 (80px static floating ball at elev 40, jump-over only),
+                   talon L71 (66x120 claw erupting via talonActive), drone L76
+                   (60px patroller, droneElev always ≥80 → run-under safe,
+                   droneShift ±40), obelisk L81 (30x150 monolith, laser-style
+                   hitbox), flare L86 (210x24 fire ribbon, arc-style, widest
+                   jump), comet L91 (54x60 fireball, cometElev=max(0,.55*(x-
+                   480)) — grounded before reaching the player), reaper L96
+                   (60x90 scythe sweeping via reaperActive). KINDS_WITH_PHASE
+                   set drives seeded phase assignment at spawn. MIRROR/FLIP
+                   ZONES: trackZones(level,lengthPx) (seeded levelSeed^0x51af,
+                   separate from layout rng) → 1-2 "mirror" zones L41+ and
+                   1-2 "flip" zones L61+, each 12-20% of length clamped
+                   [1500,6000]px, sorted, ≥800px apart, ends ≥1600px before
+                   finish (all tested). PURE RENDER TRANSFORM: GameScene puts
+                   ground strip + all spawned views + player + particles in
+                   ONE trackLayer container; mirror = scaleX -1 @ x=720
+                   (cube appears to run right-to-left), flip = scaleY -1 @
+                   y=1320 (pivot 660: ground 1000 ↔ ceiling 320 — cube runs
+                   the ceiling track with obstacles hanging down). Physics/
+                   layouts/progress untouched, so all clearability holds
+                   inside zones. Zone boundaries: portal-pillar gates on the
+                   track + camera flash on crossing (ZONE_COLORS: mirror
+                   chrome / flip violet).
                    MANDATORY RULE: every new world must introduce an obstacle
                    kind no earlier world had — new WORLDS entry ⇒ new
                    ObstacleKind unlocking at that world's first level in
@@ -101,13 +132,20 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    of each world (foreground speed streaks were tried and
                    removed per user). WORLDS (src/worlds.ts, tested): every 5
                    levels share a theme — sky/haze/silhouette/ground palette +
-                   its own MusicPattern — 8 worlds, cycling after level 40:
+                   its own MusicPattern — 20 worlds, cycling after level 100:
                    Neon City (132bpm) / Crystal Caves (112) / Magma Core (138)
                    / Frost Ridge (118, peaks) / Toxic Swamp (126, mushrooms) /
                    Gilded Dunes (124, ruins) / Deep Abyss (96, tendrils) /
-                   Aurora Summit (150, spires); each world has a unique
-                   silhouette style (uniqueness tested) and its own
-                   LEVEL_COLORS accent (8 entries); textures generated
+                   Aurora Summit (150, spires) / Mirror Mirage (120, arches,
+                   whole-tone) / Verdant Hollow (116, pines) / Rust Foundry
+                   (140, stacks) / Storm Shelf (128, thunderheads) / Inverted
+                   Citadel (110, citadel, harmonic minor) / Coral Shallows
+                   (122, coral) / Bone Wastes (100, ribs, Phrygian) / Neon
+                   Vault (138, circuits) / Obsidian Reach (104, obelisks) /
+                   Solar Forge (148, flares, mixolydian) / Void Nebula (96,
+                   planets, lydian) / Chrome Apex (160, summit); each world
+                   has a unique silhouette style (uniqueness tested) and its
+                   own LEVEL_COLORS accent (20 entries); textures generated
                    per world (sil-<id>, ground-<id>); music.ts caches one
                    MusicPlayer per world (musicForLevel/stopAllMusic). HUD
                    run timer next to the % (elapsed active-play time, shown
@@ -212,7 +250,7 @@ npm run dev:2048   # merge-2048 on Vite dev server
 npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
-npm test           # vitest (15 + 12 + 9 + 8 + 67 = 111 tests, all green)
+npm test           # vitest (15 + 12 + 9 + 8 + 102 = 146 tests, all green)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)
 ```

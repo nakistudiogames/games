@@ -23,6 +23,18 @@ export const OBSTACLE_PREVIEW: Record<ObstacleKind, { w: number; h: number }> = 
   geyser: { w: 60, h: 110 },
   tentacle: { w: 30, h: 120 },
   arc: { w: 200, h: 50 },
+  phantom: { w: 60, h: 110 },
+  vine: { w: 54, h: 140 },
+  gear: { w: 70, h: 70 },
+  gate: { w: 24, h: 300 },
+  crusher: { w: 90, h: 60 },
+  urchin: { w: 80, h: 80 },
+  talon: { w: 66, h: 120 },
+  drone: { w: 60, h: 60 },
+  obelisk: { w: 30, h: 150 },
+  flare: { w: 210, h: 24 },
+  comet: { w: 54, h: 60 },
+  reaper: { w: 60, h: 90 },
 };
 
 /**
@@ -61,6 +73,42 @@ export function drawObstacle(
     case "arc":
       drawArc(scene, container, w, h);
       return;
+    case "phantom":
+      drawPhantom(scene, container, w, h);
+      return;
+    case "vine":
+      container.setData("stalk", drawVine(scene, container, w, h));
+      return;
+    case "gear":
+      drawGear(scene, container, w);
+      return;
+    case "gate":
+      drawGate(scene, container, w, h);
+      return;
+    case "crusher":
+      drawCrusher(scene, container, w, h);
+      return;
+    case "urchin":
+      drawUrchin(scene, container, w);
+      return;
+    case "talon":
+      container.setData("blade", drawTalon(scene, container, w, h));
+      return;
+    case "drone":
+      drawDrone(scene, container, w, h);
+      return;
+    case "obelisk":
+      drawObelisk(scene, container, w, h);
+      return;
+    case "flare":
+      drawFlare(scene, container, w, h);
+      return;
+    case "comet":
+      drawComet(scene, container, w, h);
+      return;
+    case "reaper":
+      container.setData("blade", drawReaper(scene, container, w, h));
+      return;
     case "spike":
       if (floating) drawAirMine(scene, container, w, h);
       else drawSpike(scene, container, w, h);
@@ -71,13 +119,16 @@ export function drawObstacle(
   }
 }
 
-/** Preview at canonical size for the encyclopedia (geyser column forced on). */
+/** Preview at canonical size for the encyclopedia (timed parts forced on). */
 export function buildObstaclePreview(scene: Scene, kind: ObstacleKind): Container {
   const { w, h } = OBSTACLE_PREVIEW[kind];
   const container = scene.add.container(0, 0);
   drawObstacle(scene, container, kind, w, h, false);
   if (kind === "geyser") {
     (container.getData("column") as Container).setVisible(true);
+  }
+  if (kind === "talon" || kind === "reaper") {
+    (container.getData("blade") as Container).setVisible(true);
   }
   return container;
 }
@@ -408,4 +459,333 @@ function drawArc(scene: Scene, container: Container, w: number, h: number): void
   bolt.strokePoints(pts, false);
   container.add(bolt);
   scene.tweens.add({ targets: bolt, alpha: 0.6, duration: 90, yoyo: true, repeat: -1 });
+}
+
+/**
+ * Phasing crystal (world 9+): the whole view's alpha tracks phantomSolid —
+ * GameScene fades it between solid (lethal) and ghost.
+ */
+function drawPhantom(scene: Scene, container: Container, w: number, h: number): void {
+  const g = scene.add.graphics();
+  g.fillStyle(0x000000, 0.3);
+  g.fillEllipse(w / 2, h - 2, w + 16, 10);
+  // Faceted shard: lit left face, shaded right, bright fracture seam.
+  g.fillStyle(0x9fa8da, 1);
+  g.fillPoints([{ x: w / 2, y: 0 }, { x: 0, y: h * 0.35 }, { x: w * 0.2, y: h }, { x: w / 2, y: h }], true);
+  g.fillStyle(0x5c6bc0, 1);
+  g.fillPoints([{ x: w / 2, y: 0 }, { x: w, y: h * 0.35 }, { x: w * 0.8, y: h }, { x: w / 2, y: h }], true);
+  g.fillStyle(0x3949ab, 0.8);
+  g.fillPoints([{ x: w * 0.2, y: h }, { x: w * 0.8, y: h }, { x: w / 2, y: h * 0.55 }], true);
+  g.lineStyle(2, 0xe8eaf6, 0.9);
+  g.lineBetween(w / 2, 2, w / 2, h * 0.55);
+  g.fillStyle(0xffffff, 0.7);
+  g.fillCircle(w * 0.36, h * 0.3, 3.5);
+  container.add(g);
+  // Inner glimmer pulses on the same rhythm family as the phasing.
+  const core = scene.add.circle(w / 2, h * 0.45, 7, 0xc5cae9, 0.8);
+  container.add(core);
+  scene.tweens.add({ targets: core, alpha: 0.25, scale: 1.4, duration: 500, yoyo: true, repeat: -1 });
+}
+
+/**
+ * Lashing vine (world 10+): returns the bottom-anchored stalk whose scaleY
+ * GameScene drives with vineHeight — the lash visibly grows and shrinks.
+ */
+function drawVine(scene: Scene, container: Container, w: number, h: number): Container {
+  const shade = scene.add.graphics();
+  shade.fillStyle(0x000000, 0.3);
+  shade.fillEllipse(w / 2, h - 2, w + 20, 9);
+  container.add(shade);
+  // Stalk drawn upward from its base so scaling from the bottom looks alive.
+  const stalk = scene.add.container(0, h);
+  const g = scene.add.graphics();
+  g.fillStyle(0x2e7d32, 1);
+  g.fillTriangle(-6, 0, w + 6, 0, w / 2, -h);
+  g.fillStyle(0x66bb6a, 1);
+  g.fillTriangle(2, 0, w * 0.62, 0, w / 2, -h + 8);
+  // Thorn nubs up the lit side + rim light.
+  g.fillStyle(0xa5d6a7, 0.9);
+  for (let i = 1; i <= 4; i++) {
+    g.fillTriangle(w / 2 - 4, -i * (h / 5), w / 2 - 16, -i * (h / 5) + 6, w / 2 - 4, -i * (h / 5) + 10);
+  }
+  g.lineStyle(2, 0xc8e6c9, 0.5);
+  g.lineBetween(w * 0.3, -4, w / 2 - 2, -h + 10);
+  stalk.add(g);
+  const bud = scene.add.circle(w / 2, -h + 6, 6, 0xffca28, 0.95);
+  stalk.add(bud);
+  scene.tweens.add({ targets: bud, alpha: 0.5, duration: 400, yoyo: true, repeat: -1 });
+  container.add(stalk);
+  return stalk;
+}
+
+/** Patrolling cog (world 11+): GameScene shifts the view x with gearShift. */
+function drawGear(scene: Scene, container: Container, w: number): void {
+  const r = w / 2;
+  const g = scene.add.graphics();
+  g.setPosition(r, r);
+  // Square cog teeth, rusted bronze.
+  g.fillStyle(0x8d6e63, 1);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    g.save();
+    g.translateCanvas(Math.cos(a) * (r - 8), Math.sin(a) * (r - 8));
+    g.rotateCanvas(a);
+    g.fillRect(-5, -7, 12, 14);
+    g.restore();
+  }
+  g.fillStyle(0xa1887f, 1);
+  g.fillCircle(0, 0, r - 8);
+  g.fillStyle(0x6d4c41, 1);
+  g.fillCircle(0, 0, r - 16);
+  g.fillStyle(0x4e342e, 1);
+  g.fillCircle(0, 0, 9);
+  // Lit arc + specular, matching the buzzsaw's metal read.
+  g.lineStyle(4, 0xd7ccc8, 0.6);
+  g.beginPath();
+  g.arc(0, 0, r - 12, Math.PI * 1.05, Math.PI * 1.5);
+  g.strokePath();
+  g.fillStyle(0xffffff, 0.5);
+  g.fillCircle(-4, -4, 3);
+  container.add(g);
+  scene.tweens.add({ targets: g, angle: 360, duration: 1400, repeat: -1 });
+}
+
+/** Energy gate (world 12+): two bars — thread the window between them. */
+function drawGate(scene: Scene, container: Container, w: number, h: number): void {
+  const winTop = h - 170; // window spans elevations 40..170
+  const winBottom = h - 40;
+  const g = scene.add.graphics();
+  // Emitter nodes bracketing the window — steady, like the laser base.
+  g.fillStyle(0x263238, 1);
+  g.fillRect(-8, winTop - 12, w + 16, 12);
+  g.fillRect(-8, winBottom, w + 16, 12);
+  g.fillStyle(0x455a64, 1);
+  g.fillRect(-8, winTop - 12, w + 16, 4);
+  g.fillRect(-8, winBottom, w + 16, 4);
+  container.add(g);
+  const bars = scene.add.graphics();
+  for (const [y0, y1] of [[0, winTop - 12], [winBottom + 12, h]] as const) {
+    bars.fillStyle(0x40c4ff, 0.35);
+    bars.fillRect(-4, y0, w + 8, y1 - y0);
+    bars.fillStyle(0x40c4ff, 0.9);
+    bars.fillRect(4, y0, w - 8, y1 - y0);
+    bars.fillStyle(0xe1f5fe, 1);
+    bars.fillRect(w / 2 - 2, y0, 4, y1 - y0);
+  }
+  container.add(bars);
+  scene.tweens.add({ targets: bars, alpha: 0.55, duration: 260, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+}
+
+/** Bobbing crusher slab (world 13+): GameScene drives y with crusherElev. */
+function drawCrusher(scene: Scene, container: Container, w: number, h: number): void {
+  const g = scene.add.graphics();
+  const d = 10;
+  // 2.5D slab, same light model as blocks, in gunmetal.
+  g.fillStyle(0x1c2226, 1);
+  g.fillPoints([{ x: w, y: 0 }, { x: w + d, y: -d }, { x: w + d, y: h - 14 - d }, { x: w, y: h - 14 }], true);
+  g.fillStyle(0x78909c, 1);
+  g.fillPoints([{ x: 0, y: 0 }, { x: d, y: -d }, { x: w + d, y: -d }, { x: w, y: 0 }], true);
+  g.fillGradientStyle(0x546e7a, 0x546e7a, 0x37474f, 0x37474f, 1);
+  g.fillRect(0, 0, w, h - 14);
+  g.lineStyle(2, 0x1c2226, 1);
+  g.strokeRect(0, 0, w, h - 14);
+  // Rivets.
+  g.fillStyle(0xb0bec5, 0.9);
+  for (const rx of [10, w / 2, w - 10]) g.fillCircle(rx, 9, 3);
+  // Grinding teeth under the slab.
+  g.fillStyle(0x263238, 1);
+  for (let x = 4; x + 14 <= w; x += 18) {
+    g.fillTriangle(x, h - 14, x + 14, h - 14, x + 7, h);
+  }
+  container.add(g);
+}
+
+/** Static floating spike ball (world 14+): a clean jump-over. */
+function drawUrchin(scene: Scene, container: Container, w: number): void {
+  const r = w / 2;
+  const g = scene.add.graphics();
+  g.setPosition(r, r);
+  g.fillStyle(0xd84315, 1);
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    g.fillTriangle(
+      Math.cos(a - 0.18) * (r - 12), Math.sin(a - 0.18) * (r - 12),
+      Math.cos(a + 0.18) * (r - 12), Math.sin(a + 0.18) * (r - 12),
+      Math.cos(a) * (r + 5), Math.sin(a) * (r + 5),
+    );
+  }
+  g.fillStyle(0xbf360c, 1);
+  g.fillCircle(0, 0, r - 10);
+  g.fillStyle(0xff8a65, 1);
+  g.fillCircle(-4, -4, r - 17);
+  g.fillStyle(0x870000, 1);
+  g.fillCircle(2, 2, r - 23);
+  g.fillStyle(0xffffff, 0.5);
+  g.fillCircle(-r * 0.3, -r * 0.3, 4);
+  container.add(g);
+  // Slow menacing rotation — static position, living surface.
+  scene.tweens.add({ targets: g, angle: 360, duration: 6000, repeat: -1 });
+}
+
+/**
+ * Buried talon (world 15+): returns the erupting claw whose visibility
+ * GameScene syncs to talonActive; the mound is the always-visible tell.
+ */
+function drawTalon(scene: Scene, container: Container, w: number, h: number): Container {
+  const blade = scene.add.container(0, 0);
+  const bg = scene.add.graphics();
+  // Three curved bone talons: lit front edge, shaded back.
+  for (const [cx, tip, lean] of [[w * 0.22, h * 0.55, -8], [w * 0.5, h, 0], [w * 0.78, h * 0.7, 8]] as const) {
+    bg.fillStyle(0xbcaaa4, 1);
+    bg.fillTriangle(cx - 9, h, cx + 9, h, cx + lean, h - tip);
+    bg.fillStyle(0x8d6e63, 1);
+    bg.fillTriangle(cx + 1, h, cx + 9, h, cx + lean, h - tip);
+    bg.fillStyle(0xefebe9, 0.8);
+    bg.fillCircle(cx + lean * 0.8, h - tip + 5, 2.5);
+  }
+  blade.add(bg);
+  container.add(blade);
+  // Cracked dirt mound — always visible, telegraphs the trap.
+  const g = scene.add.graphics();
+  g.fillStyle(0x000000, 0.3);
+  g.fillEllipse(w / 2, h - 2, w + 18, 9);
+  g.fillStyle(0x4e342e, 1);
+  g.fillEllipse(w / 2, h - 4, w + 10, 16);
+  g.fillStyle(0x6d4c41, 1);
+  g.fillEllipse(w / 2, h - 7, w - 4, 9);
+  g.lineStyle(2, 0x272320, 0.9);
+  g.lineBetween(w * 0.3, h - 10, w * 0.45, h - 3);
+  g.lineBetween(w * 0.6, h - 11, w * 0.7, h - 4);
+  container.add(g);
+  return blade;
+}
+
+/** Hover-drone (world 16+): GameScene drives x/y with droneShift/droneElev. */
+function drawDrone(scene: Scene, container: Container, w: number, h: number): void {
+  const g = scene.add.graphics();
+  // Rotor glow disc above the body.
+  g.fillStyle(0x69f0ae, 0.25);
+  g.fillEllipse(w / 2, 4, w + 18, 10);
+  // Hull: lit top dome, shaded belly.
+  g.fillStyle(0x37474f, 1);
+  g.fillEllipse(w / 2, h * 0.55, w, h * 0.7);
+  g.fillStyle(0x546e7a, 1);
+  g.fillEllipse(w / 2, h * 0.42, w - 8, h * 0.42);
+  g.fillStyle(0x263238, 1);
+  g.fillEllipse(w / 2, h * 0.72, w - 6, h * 0.3);
+  g.fillStyle(0xffffff, 0.4);
+  g.fillEllipse(w * 0.34, h * 0.36, 12, 6);
+  container.add(g);
+  // Scanner eye pulses.
+  const eye = scene.add.circle(w / 2, h * 0.58, 6, 0x69f0ae, 1);
+  container.add(eye);
+  scene.tweens.add({ targets: eye, alpha: 0.35, duration: 350, yoyo: true, repeat: -1 });
+}
+
+/** Obsidian monolith (world 17+): the tallest precise jump. */
+function drawObelisk(scene: Scene, container: Container, w: number, h: number): void {
+  const g = scene.add.graphics();
+  const d = 8;
+  // 2.5D like a block, but tapered: lit cap, shaded right face.
+  g.fillStyle(0x12081f, 1);
+  g.fillPoints([{ x: w, y: 6 }, { x: w + d, y: 6 - d }, { x: w + d, y: h - d }, { x: w, y: h }], true);
+  g.fillStyle(0x7e57c2, 1);
+  g.fillPoints([{ x: 2, y: 6 }, { x: 2 + d, y: 6 - d }, { x: w + d, y: 6 - d }, { x: w, y: 6 }], true);
+  g.fillGradientStyle(0x4527a0, 0x4527a0, 0x261445, 0x261445, 1);
+  g.fillPoints([{ x: 2, y: 6 }, { x: w, y: 6 }, { x: w - 1, y: h }, { x: 3, y: h }], true);
+  g.lineStyle(2, 0x12081f, 1);
+  g.strokeRect(2, 6, w - 3, h - 6);
+  container.add(g);
+  // Glowing rune seam.
+  const rune = scene.add.graphics();
+  rune.lineStyle(3, 0xb388ff, 0.9);
+  rune.lineBetween(w / 2, 14, w / 2, h - 12);
+  rune.fillStyle(0xb388ff, 0.9);
+  rune.fillCircle(w / 2, h * 0.3, 4);
+  rune.fillCircle(w / 2, h * 0.62, 4);
+  container.add(rune);
+  scene.tweens.add({ targets: rune, alpha: 0.4, duration: 900, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+}
+
+/** Solar fire ribbon (world 18+): wide, low, always burning. */
+function drawFlare(scene: Scene, container: Container, w: number, h: number): void {
+  const g = scene.add.graphics();
+  // Scorched strip under the flames.
+  g.fillStyle(0x1c0e02, 1);
+  g.fillRect(-4, h - 6, w + 8, 6);
+  // Flame wall: layered tongues, hot core low, cooler tips high.
+  g.fillStyle(0xbf360c, 0.9);
+  for (let x = 0; x + 26 <= w + 10; x += 26) {
+    g.fillTriangle(x, h, x + 26, h, x + 13, h - 34 - (x % 3) * 6);
+  }
+  g.fillStyle(0xff9800, 0.95);
+  for (let x = 8; x + 22 <= w; x += 22) {
+    g.fillTriangle(x, h, x + 22, h, x + 11, h - 22 - (x % 2) * 8);
+  }
+  g.fillStyle(0xffe082, 1);
+  g.fillRect(2, h - 8, w - 4, 5);
+  container.add(g);
+  const glow = scene.add.rectangle(w / 2, h - 16, w + 14, 26, 0xff9800, 0.22);
+  container.add(glow);
+  scene.tweens.add({ targets: [g, glow], alpha: 0.72, duration: 110, yoyo: true, repeat: -1 });
+}
+
+/** Fallen comet (world 19+): GameScene drives y with cometElev as it lands. */
+function drawComet(scene: Scene, container: Container, w: number, h: number): void {
+  const g = scene.add.graphics();
+  // Trail streaks up-right — the direction it fell from.
+  g.fillStyle(0xf48fb1, 0.3);
+  g.fillTriangle(w * 0.4, h * 0.5, w + 46, -40, w + 20, -52);
+  g.fillStyle(0xfce4ec, 0.4);
+  g.fillTriangle(w * 0.5, h * 0.45, w + 34, -34, w + 22, -40);
+  // Molten core: shaded under, lit toward the trail.
+  g.fillStyle(0x880e4f, 1);
+  g.fillCircle(w / 2, h / 2, w / 2);
+  g.fillStyle(0xd81b60, 1);
+  g.fillCircle(w / 2 + 2, h / 2 - 2, w / 2 - 6);
+  g.fillStyle(0xf48fb1, 1);
+  g.fillCircle(w / 2 + 5, h / 2 - 5, w / 2 - 13);
+  g.fillStyle(0xffffff, 0.75);
+  g.fillCircle(w / 2 + 8, h / 2 - 8, 4);
+  container.add(g);
+  const flicker = scene.add.circle(w / 2, h / 2, w / 2 + 6, 0xf48fb1, 0.18);
+  container.add(flicker);
+  scene.tweens.add({ targets: flicker, alpha: 0.05, scale: 1.2, duration: 160, yoyo: true, repeat: -1 });
+}
+
+/**
+ * Reaper scythe (world 20+): returns the sweeping blade whose visibility
+ * GameScene syncs to reaperActive; the chrome post is the constant tell.
+ */
+function drawReaper(scene: Scene, container: Container, w: number, h: number): Container {
+  const blade = scene.add.container(0, 0);
+  const bg = scene.add.graphics();
+  // Crescent blade across the track: bright edge, dark spine.
+  bg.fillStyle(0x455a64, 1);
+  bg.fillPoints(
+    [{ x: -14, y: h * 0.25 }, { x: w + 14, y: h * 0.4 }, { x: w + 6, y: h * 0.72 }, { x: -6, y: h * 0.55 }],
+    true,
+  );
+  bg.fillStyle(0xeceff1, 1);
+  bg.fillPoints(
+    [{ x: -14, y: h * 0.25 }, { x: w + 14, y: h * 0.4 }, { x: w + 10, y: h * 0.52 }, { x: -10, y: h * 0.37 }],
+    true,
+  );
+  blade.add(bg);
+  container.add(blade);
+  scene.tweens.add({ targets: blade, y: 6, duration: 300, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+  // Chrome post with an energy core — always visible.
+  const g = scene.add.graphics();
+  g.fillStyle(0x000000, 0.3);
+  g.fillEllipse(w / 2, h - 2, w + 10, 8);
+  g.fillStyle(0x263238, 1);
+  g.fillRect(w / 2 - 5, 0, 10, h);
+  g.fillStyle(0x546e7a, 1);
+  g.fillRect(w / 2 - 5, 0, 4, h);
+  g.fillStyle(0x00e5ff, 1);
+  g.fillCircle(w / 2, 6, 7);
+  g.fillStyle(0xffffff, 0.85);
+  g.fillCircle(w / 2 - 2, 4, 2.5);
+  container.add(g);
+  return blade;
 }

@@ -4,11 +4,18 @@ import type { MusicPlayer } from "@mg/core";
 import { floatBanner, textButton } from "@mg/ui";
 import {
   GROUND_Y,
+  KINDS_WITH_PHASE,
+  MIRROR_MIN_LEVEL,
   PLAYER_SIZE,
   PLAYER_X,
   POWER_UPS,
   checkDeath,
   collectsPowerUp,
+  cometElev,
+  crusherElev,
+  droneElev,
+  droneShift,
+  gearShift,
   geyserActive,
   jump,
   levelColor,
@@ -18,15 +25,28 @@ import {
   levelSpeed,
   makePowerUp,
   minGapPx,
+  phantomSolid,
   pickPattern,
   powerUpGapPx,
+  reaperActive,
   stepRunner,
   supportAt,
   swingElev,
+  talonActive,
   tentacleSway,
+  trackZones,
   tryJump,
+  vineHeight,
+  zoneKindAt,
 } from "../logic/runner";
-import type { Obstacle, ObstacleKind, PowerUp, Runner } from "../logic/runner";
+import type {
+  Obstacle,
+  ObstacleKind,
+  PowerUp,
+  Runner,
+  TrackZone,
+  TrackZoneKind,
+} from "../logic/runner";
 import { adsReady } from "../ads";
 import { characterById } from "../characters";
 import { attachAura, buildCharacterParts } from "../characterView";
@@ -47,6 +67,9 @@ const JUMP_BUFFER_MS = 110;
 const FIRST_POWERUP_PX = 1500;
 /** No obstacles/pickups spawn once the finish is closer than this. */
 const CLEAR_RUNWAY_PX = 1200;
+/** Vertical mirror line for gravity-flip zones: ground 1000 ↔ ceiling 320. */
+const FLIP_PIVOT_Y = 660;
+const ZONE_COLORS: Record<TrackZoneKind, number> = { mirror: 0xeceff1, flip: 0xb388ff };
 
 interface ObstacleView {
   obs: Obstacle;
@@ -80,6 +103,17 @@ export class GameScene extends Phaser.Scene {
   private obstacles: ObstacleView[] = [];
   private powerUps: PowerUpView[] = [];
   private finishView: Phaser.GameObjects.Container | null = null;
+  /**
+   * Everything that scrolls with the track lives in this container. Mirror
+   * and flip zones are ONE transform on it (scaleX/scaleY = -1) — physics
+   * and layouts never change, only how they're presented.
+   */
+  private trackLayer!: Phaser.GameObjects.Container;
+  /** Sub-container for spawned views (obstacles/pickups/finish/gates). */
+  private trackObjects!: Phaser.GameObjects.Container;
+  private zones: TrackZone[] = [];
+  private activeZone: TrackZoneKind | null = null;
+  private zoneGates: Array<{ at: number; view: Phaser.GameObjects.Container }> = [];
   private rng!: Rng;
   private phase: Phase = "ready";
   private distancePx = 0;
@@ -127,10 +161,17 @@ export class GameScene extends Phaser.Scene {
     this.jumpBufferMs = 0;
     this.doubleJumpMs = 0;
     this.nextPowerUpAt = FIRST_POWERUP_PX;
+    this.zones = this.levelNum >= MIRROR_MIN_LEVEL ? trackZones(this.levelNum, this.levelLengthPx) : [];
+    this.activeZone = null;
+    this.zoneGates = [];
 
     this.ensureTextures();
+    // The track layer sits above the scenery (depths 0-3) and below the HUD
+    // (20+); children render in add order, so build order = draw order.
+    this.trackLayer = this.add.container(0, 0).setDepth(4);
     this.buildBackground();
     this.buildPlayer();
+    this.buildZoneGates();
     this.buildHud();
 
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
@@ -355,6 +396,146 @@ export class GameScene extends Phaser.Scene {
           g.fillStyle(this.world.silLight, 0.8);
           g.fillRect(x + w / 2 - 2, 320 - h, 4, h); // lit spine
         }
+      } else if (this.world.silhouette === "arches") {
+        for (const [x, w, h] of [[0, 130, 200], [130, 150, 260], [290, 120, 180]] as const) {
+          g.fillStyle(this.world.silDark, 1);
+          g.fillRect(x, 320 - h, w, h);
+          // Carved opening: a lighter arch reads as sky through the monument.
+          g.fillStyle(this.world.silLight, 0.35);
+          g.fillRect(x + w * 0.3, 320 - h * 0.62, w * 0.4, h * 0.62);
+          g.fillEllipse(x + w / 2, 320 - h * 0.62, w * 0.4, h * 0.3);
+          g.fillStyle(this.world.silLight, 0.9);
+          g.fillRect(x, 320 - h, w, 5);
+        }
+      } else if (this.world.silhouette === "pines") {
+        for (const [x, w, h] of [[0, 80, 180], [70, 110, 280], [180, 90, 220], [270, 120, 300], [380, 70, 160]] as const) {
+          g.fillStyle(this.world.silDark, 1);
+          for (let t = 0; t < 3; t++) {
+            const tw = w * (1 - t * 0.25);
+            const ty = 320 - (h / 3) * (t + 1);
+            g.fillTriangle(x + (w - tw) / 2, 320 - (h / 3) * t, x + w - (w - tw) / 2, 320 - (h / 3) * t, x + w / 2, ty);
+          }
+          g.fillStyle(this.world.silLight, 0.7);
+          g.fillTriangle(x + w * 0.35, 320 - h * 0.66, x + w / 2, 320 - h, x + w / 2, 320 - h * 0.66);
+        }
+      } else if (this.world.silhouette === "stacks") {
+        for (const [x, w, h] of [[10, 60, 240], [110, 80, 180], [220, 55, 290], [320, 70, 210]] as const) {
+          g.fillStyle(this.world.silDark, 1);
+          g.fillRect(x, 320 - h, w, h);
+          g.fillRect(x - 8, 320 - h, w + 16, 14); // crown lip
+          g.fillStyle(this.world.silLight, 0.8);
+          g.fillRect(x, 320 - h, 6, h);
+          // Smoke plume drifting off the stack.
+          g.fillStyle(this.world.silLight, 0.3);
+          g.fillEllipse(x + w / 2 + 18, 320 - h - 18, 46, 22);
+          g.fillEllipse(x + w / 2 + 44, 320 - h - 34, 30, 16);
+        }
+      } else if (this.world.silhouette === "thunderheads") {
+        for (const [x, y, s] of [[30, 240, 60], [140, 190, 80], [280, 230, 70], [370, 180, 50]] as const) {
+          g.fillStyle(this.world.silDark, 1);
+          g.fillEllipse(x, y, s * 2.4, s);
+          g.fillEllipse(x + s, y - s * 0.5, s * 1.8, s * 0.9);
+          g.fillStyle(this.world.silLight, 0.6);
+          g.fillEllipse(x - s * 0.4, y - s * 0.36, s, s * 0.4);
+          // Lightning drops to the horizon.
+          g.lineStyle(3, this.world.silLight, 0.8);
+          g.beginPath();
+          g.moveTo(x + s * 0.4, y + s * 0.4);
+          g.lineTo(x + s * 0.2, y + s * 0.9);
+          g.lineTo(x + s * 0.5, y + s * 1.1);
+          g.strokePath();
+        }
+      } else if (this.world.silhouette === "citadel") {
+        for (const [x, w, h] of [[20, 90, 230], [140, 130, 300], [300, 90, 250]] as const) {
+          g.fillStyle(this.world.silDark, 1);
+          g.fillRect(x, 320 - h, w, h);
+          // Battlements + a spire — and mirrored towers hanging above, the
+          // inverted-citadel motif.
+          for (let bx = x; bx + 14 <= x + w; bx += 22) g.fillRect(bx, 320 - h - 10, 14, 10);
+          g.fillTriangle(x + w / 2 - 12, 320 - h - 10, x + w / 2 + 12, 320 - h - 10, x + w / 2, 320 - h - 52);
+          g.fillStyle(this.world.silLight, 0.35);
+          g.fillRect(x + w * 0.18, 20, w * 0.64, 34);
+          g.fillTriangle(x + w / 2 - 10, 54, x + w / 2 + 10, 54, x + w / 2, 86);
+          g.fillStyle(this.world.silLight, 0.9);
+          g.fillRect(x, 320 - h, w, 5);
+        }
+      } else if (this.world.silhouette === "coral") {
+        for (const [x, w, h] of [[10, 70, 180], [100, 90, 260], [210, 60, 150], [290, 100, 230], [390, 40, 120]] as const) {
+          g.fillStyle(this.world.silDark, 1);
+          // Branching coral: a trunk with two forks.
+          g.fillRect(x + w / 2 - 8, 320 - h * 0.55, 16, h * 0.55);
+          g.fillTriangle(x + w / 2, 320 - h * 0.5, x, 320 - h, x + 26, 320 - h);
+          g.fillTriangle(x + w / 2, 320 - h * 0.55, x + w, 320 - h * 0.9, x + w - 24, 320 - h * 0.86);
+          g.fillStyle(this.world.silLight, 0.7);
+          g.fillCircle(x + 13, 320 - h - 4, 7);
+          g.fillCircle(x + w - 12, 320 - h * 0.9 - 4, 6);
+        }
+      } else if (this.world.silhouette === "ribs") {
+        // A colossal ribcage arcing over the horizon.
+        for (let i = 0; i < 6; i++) {
+          const x = 20 + i * 68;
+          const h = 180 + (i % 2) * 60 + (i < 3 ? i * 24 : (5 - i) * 24);
+          g.fillStyle(this.world.silDark, 1);
+          g.fillRect(x, 320 - h, 22, h);
+          g.fillEllipse(x + 24, 320 - h, 50, 26);
+          g.fillStyle(this.world.silLight, 0.6);
+          g.fillRect(x + 3, 320 - h, 5, h);
+        }
+      } else if (this.world.silhouette === "circuits") {
+        for (const [x, w, h] of [[0, 110, 210], [130, 90, 280], [240, 130, 170], [390, 60, 240]] as const) {
+          g.fillStyle(this.world.silDark, 1);
+          g.fillRect(x, 320 - h, w, h);
+          // Trace lines + node dots, like a motherboard skyline.
+          g.lineStyle(3, this.world.silLight, 0.7);
+          g.lineBetween(x + 12, 320 - h + 16, x + 12, 320 - 20);
+          g.lineBetween(x + 12, 320 - h + 16, x + w - 16, 320 - h + 16);
+          g.fillStyle(this.world.silLight, 0.9);
+          g.fillCircle(x + 12, 320 - h + 16, 5);
+          g.fillCircle(x + w - 16, 320 - h + 16, 5);
+        }
+      } else if (this.world.silhouette === "obelisks") {
+        for (const [x, w, h] of [[30, 46, 260], [120, 60, 310], [230, 40, 200], [310, 54, 280], [400, 30, 160]] as const) {
+          g.fillStyle(this.world.silDark, 1);
+          g.fillPoints(
+            [{ x, y: 320 }, { x: x + w * 0.14, y: 320 - h }, { x: x + w * 0.86, y: 320 - h }, { x: x + w, y: 320 }],
+            true,
+          );
+          g.fillTriangle(x + w * 0.14, 320 - h, x + w * 0.86, 320 - h, x + w / 2, 320 - h - w * 0.7);
+          g.fillStyle(this.world.silLight, 0.8);
+          g.fillRect(x + w / 2 - 2, 320 - h + 8, 4, h - 24);
+        }
+      } else if (this.world.silhouette === "flares") {
+        // Prominence loops erupting off a molten horizon.
+        g.fillStyle(this.world.silDark, 1);
+        g.fillRect(0, 250, 400, 70);
+        for (const [x, r] of [[70, 60], [200, 95], [330, 50]] as const) {
+          g.lineStyle(14, this.world.silDark, 1);
+          g.beginPath();
+          g.arc(x, 260, r, Math.PI, 0);
+          g.strokePath();
+          g.lineStyle(5, this.world.silLight, 0.8);
+          g.beginPath();
+          g.arc(x, 260, r, Math.PI, 0);
+          g.strokePath();
+        }
+      } else if (this.world.silhouette === "planets") {
+        // Ringed giants and moons low on the horizon.
+        for (const [x, y, r] of [[90, 210, 70], [280, 150, 46], [370, 250, 30]] as const) {
+          g.fillStyle(this.world.silDark, 1);
+          g.fillCircle(x, y, r);
+          g.fillStyle(this.world.silLight, 0.5);
+          g.fillCircle(x - r * 0.3, y - r * 0.3, r * 0.4);
+          g.lineStyle(6, this.world.silLight, 0.55);
+          g.strokeEllipse(x, y + r * 0.1, r * 3, r * 0.7);
+        }
+      } else if (this.world.silhouette === "summit") {
+        for (const [x, w, h] of [[0, 170, 260], [150, 210, 320], [330, 140, 230]] as const) {
+          g.fillStyle(this.world.silDark, 1);
+          g.fillTriangle(x, 320, x + w * 0.5, 320 - h, x + w, 320);
+          // Chrome facet: the whole lit half gleams, final-world flourish.
+          g.fillStyle(this.world.silLight, 0.85);
+          g.fillTriangle(x + w * 0.5, 320 - h, x + w * 0.5, 320, x + w * 0.28, 320);
+        }
       } else {
         const rocks: Array<[number, number, number]> = [
           [0, 160, 140], [100, 190, 210], [240, 170, 160], [320, 160, 120],
@@ -431,16 +612,17 @@ export class GameScene extends Phaser.Scene {
 
     this.groundTile = this.add
       .tileSprite(0, GROUND_Y, WORLD_WIDTH, WORLD_HEIGHT - GROUND_Y, `ground-${this.world.id}`)
-      .setOrigin(0)
-      .setDepth(4);
+      .setOrigin(0);
     // Ground falls away into darkness — reads as depth below the track.
-    const groundFade = this.add.graphics().setDepth(4);
+    const groundFade = this.add.graphics();
     groundFade.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0, 0, 0.65, 0.65);
     groundFade.fillRect(0, GROUND_Y, WORLD_WIDTH, WORLD_HEIGHT - GROUND_Y);
 
     // Neon edge on the ground plus a soft glow above it, in the level color.
-    this.add.rectangle(0, GROUND_Y - 10, WORLD_WIDTH, 10, accent, 0.12).setOrigin(0).setDepth(5);
-    this.add.rectangle(0, GROUND_Y - 3, WORLD_WIDTH, 5, accent).setOrigin(0).setDepth(5);
+    const glow = this.add.rectangle(0, GROUND_Y - 10, WORLD_WIDTH, 10, accent, 0.12).setOrigin(0);
+    const edge = this.add.rectangle(0, GROUND_Y - 3, WORLD_WIDTH, 5, accent).setOrigin(0);
+    // The whole track strip flips/mirrors with the zone transform.
+    this.trackLayer.add([this.groundTile, groundFade, glow, edge]);
   }
 
   private buildPlayer(): void {
@@ -449,17 +631,13 @@ export class GameScene extends Phaser.Scene {
     // Gold overlay shown only while the double-jump power-up is active —
     // distinct from the character's always-on signature aura.
     this.aura = this.add.rectangle(0, 0, s + 18, s + 18, 0xffd54f, 0.28).setVisible(false);
-    this.playerView = this.add
-      .container(PLAYER_X + s / 2, GROUND_Y - s / 2, [
-        this.aura,
-        ...buildCharacterParts(this, spec, s),
-      ])
-      .setDepth(10);
+    this.playerView = this.add.container(PLAYER_X + s / 2, GROUND_Y - s / 2, [
+      this.aura,
+      ...buildCharacterParts(this, spec, s),
+    ]);
     attachAura(this, this.playerView, spec, s);
 
-    this.playerShadow = this.add
-      .image(PLAYER_X + s / 2, GROUND_Y + 9, "shadowtex")
-      .setDepth(6);
+    this.playerShadow = this.add.image(PLAYER_X + s / 2, GROUND_Y + 9, "shadowtex");
 
     this.trail = this.add.particles(0, 0, "dot", {
       follow: this.playerView,
@@ -472,7 +650,6 @@ export class GameScene extends Phaser.Scene {
       tint: [...spec.trail],
       emitting: false,
     });
-    this.trail.setDepth(9);
 
     this.dust = this.add.particles(0, 0, "dot", {
       speed: { min: 40, max: 140 },
@@ -483,7 +660,6 @@ export class GameScene extends Phaser.Scene {
       tint: 0x9e9e9e,
       emitting: false,
     });
-    this.dust.setDepth(9);
 
     this.sparkle = this.add.particles(0, 0, "dot", {
       speed: { min: 80, max: 260 },
@@ -493,7 +669,6 @@ export class GameScene extends Phaser.Scene {
       tint: [0xffd54f, 0xfff59d, 0xffffff],
       emitting: false,
     });
-    this.sparkle.setDepth(12);
 
     this.burst = this.add.particles(0, 0, "dot", {
       speed: { min: 120, max: 420 },
@@ -504,7 +679,19 @@ export class GameScene extends Phaser.Scene {
       tint: [0x26c6da, 0xffffff, 0xef5350],
       emitting: false,
     });
-    this.burst.setDepth(12);
+
+    // Track-layer draw order: shadow under everything spawned, spawned views
+    // under the trail/player, celebration particles on top.
+    this.trackObjects = this.add.container(0, 0);
+    this.trackLayer.add([
+      this.playerShadow,
+      this.trackObjects,
+      this.trail,
+      this.dust,
+      this.playerView,
+      this.sparkle,
+      this.burst,
+    ]);
   }
 
   private buildHud(): void {
@@ -635,12 +822,43 @@ export class GameScene extends Phaser.Scene {
     for (const { obs, view } of this.obstacles) {
       obs.x -= speed * dt;
       view.x = obs.x;
-      // Swing mines bob and tentacles sway as functions of x — keep the
-      // views on their hitboxes; geyser columns show exactly when lethal.
-      if (obs.kind === "swing") view.y = GROUND_Y - obs.h - swingElev(obs);
-      else if (obs.kind === "tentacle") view.x = obs.x + tentacleSway(obs);
-      else if (obs.kind === "geyser") {
-        (view.getData("column") as Phaser.GameObjects.Container).setVisible(geyserActive(obs));
+      // Moving/timed kinds: keep every view on its hitbox — position follows
+      // the motion function, visibility/alpha tracks the lethal state.
+      switch (obs.kind) {
+        case "swing":
+          view.y = GROUND_Y - obs.h - swingElev(obs);
+          break;
+        case "tentacle":
+          view.x = obs.x + tentacleSway(obs);
+          break;
+        case "geyser":
+          (view.getData("column") as Phaser.GameObjects.Container).setVisible(geyserActive(obs));
+          break;
+        case "phantom":
+          view.setAlpha(phantomSolid(obs) ? 1 : 0.28);
+          break;
+        case "vine":
+          (view.getData("stalk") as Phaser.GameObjects.Container).scaleY = vineHeight(obs) / obs.h;
+          break;
+        case "gear":
+          view.x = obs.x + gearShift(obs);
+          break;
+        case "crusher":
+          view.y = GROUND_Y - obs.h - crusherElev(obs);
+          break;
+        case "talon":
+          (view.getData("blade") as Phaser.GameObjects.Container).setVisible(talonActive(obs));
+          break;
+        case "drone":
+          view.x = obs.x + droneShift(obs);
+          view.y = GROUND_Y - obs.h - droneElev(obs);
+          break;
+        case "comet":
+          view.y = GROUND_Y - obs.h - cometElev(obs);
+          break;
+        case "reaper":
+          (view.getData("blade") as Phaser.GameObjects.Container).setVisible(reaperActive(obs));
+          break;
       }
     }
     while (this.obstacles.length > 0 && this.obstacles[0]!.obs.x + this.obstacles[0]!.obs.w < -40) {
@@ -649,6 +867,7 @@ export class GameScene extends Phaser.Scene {
     this.maybeSpawnPattern(speed);
     this.updatePowerUps(speed, dt, deltaMs);
     this.updateFinish();
+    this.updateZones();
 
     const obsList = this.obstacles.map((o) => o.obs);
     const wasAirborne = !this.runner.grounded;
@@ -688,6 +907,47 @@ export class GameScene extends Phaser.Scene {
     if (checkDeath(this.runner.y, obsList)) this.die();
   }
 
+  /**
+   * Mirror/flip zones: one transform on the track layer. Mirror reflects the
+   * view about the canvas center (the cube appears to run right-to-left);
+   * flip reflects it about FLIP_PIVOT_Y (the cube runs the ceiling track).
+   */
+  private updateZones(): void {
+    // Portal gates scroll with the track; positioned in track coordinates so
+    // the layer transform carries them too.
+    for (const { at, view } of this.zoneGates) {
+      const x = PLAYER_X + (at - this.distancePx);
+      view.x = x;
+      view.setVisible(x > -80 && x < WORLD_WIDTH + 80);
+    }
+    const kind = zoneKindAt(this.distancePx, this.zones);
+    if (kind === this.activeZone) return;
+    this.activeZone = kind;
+    this.trackLayer.setScale(kind === "mirror" ? -1 : 1, kind === "flip" ? -1 : 1);
+    this.trackLayer.setPosition(kind === "mirror" ? WORLD_WIDTH : 0, kind === "flip" ? FLIP_PIVOT_Y * 2 : 0);
+    const c = Phaser.Display.Color.IntegerToColor(kind ? ZONE_COLORS[kind] : 0xffffff);
+    this.cameras.main.flash(220, c.red, c.green, c.blue);
+    sfx.clear(kind ? 2 : 1);
+  }
+
+  /** One shimmering portal pillar per zone boundary, telegraphed on-track. */
+  private buildZoneGates(): void {
+    for (const z of this.zones) {
+      for (const at of [z.start, z.end]) {
+        const color = ZONE_COLORS[z.kind];
+        const gate = this.add.container(WORLD_WIDTH + 200, 0);
+        gate.add(this.add.rectangle(0, GROUND_Y - 190, 30, 380, color, 0.1).setOrigin(0.5, 0));
+        const beam = this.add.rectangle(0, GROUND_Y - 190, 10, 380, color, 0.55).setOrigin(0.5, 0);
+        gate.add(beam);
+        gate.add(this.add.circle(0, GROUND_Y - 190, 10, color, 0.9));
+        this.tweens.add({ targets: beam, alpha: 0.25, duration: 420, yoyo: true, repeat: -1 });
+        gate.setVisible(false);
+        this.trackObjects.add(gate);
+        this.zoneGates.push({ at, view: gate });
+      }
+    }
+  }
+
   /** The finish line scrolls in with the track once it's within reach. */
   private updateFinish(): void {
     const remaining = this.remainingPx();
@@ -700,7 +960,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private buildFinishView(): Phaser.GameObjects.Container {
-    const container = this.add.container(WORLD_WIDTH + 200, 0).setDepth(8);
+    const container = this.add.container(WORLD_WIDTH + 200, 0);
+    this.trackObjects.add(container);
     const accent = levelColor(this.levelNum);
     // Glowing pole from ground to sky with a checkered flag block.
     container.add(this.add.rectangle(0, GROUND_Y - 420, 26, 420, 0x0c0e14, 0.6).setOrigin(0.5, 0));
@@ -774,7 +1035,8 @@ export class GameScene extends Phaser.Scene {
 
   private buildPowerUpView(p: PowerUp): Phaser.GameObjects.Container {
     const spec = POWER_UPS[p.kind];
-    const container = this.add.container(p.x, p.y).setDepth(9);
+    const container = this.add.container(p.x, p.y);
+    this.trackObjects.add(container);
     const diamond = this.add.rectangle(0, 0, 40, 40, spec.color).setStrokeStyle(4, 0xffffff, 0.9);
     diamond.setAngle(45);
     // Gem facet: lit upper-left wedge gives the pickup depth as it spins.
@@ -817,29 +1079,33 @@ export class GameScene extends Phaser.Scene {
         h: spec.h,
         elev: spec.elev ?? 0,
         kind: spec.kind,
-        // Seeded rng: bob/eruption/sway phases are part of the fixed layout.
-        phase:
-          spec.kind === "swing" || spec.kind === "geyser" || spec.kind === "tentacle"
-            ? this.rng.next() * Math.PI * 2
-            : 0,
+        // Seeded rng: motion phases are part of the level's fixed layout.
+        phase: KINDS_WITH_PHASE.has(spec.kind) ? this.rng.next() * Math.PI * 2 : 0,
       };
       this.obstacles.push({ obs, view: this.buildObstacleView(obs) });
     }
   }
 
   private buildObstacleView(obs: Obstacle): Phaser.GameObjects.Container {
-    const top =
-      obs.kind === "swing"
-        ? GROUND_Y - obs.h - swingElev(obs)
-        : GROUND_Y - obs.elev - obs.h;
-    const container = this.add.container(obs.x, top).setDepth(8);
+    const movingElev =
+      obs.kind === "swing" ? swingElev(obs)
+      : obs.kind === "crusher" ? crusherElev(obs)
+      : obs.kind === "drone" ? droneElev(obs)
+      : obs.kind === "comet" ? cometElev(obs)
+      : obs.elev;
+    const top = GROUND_Y - movingElev - obs.h;
+    const container = this.add.container(obs.x, top);
+    this.trackObjects.add(container);
     const { w, h } = obs;
     const floating = obs.elev > 0;
 
     // Shadow falls on the ground below — smaller/fainter for floating
-    // objects. Pits/geysers are holes and swing mines/lasers/tentacles/arcs
-    // move or glow — no cast shadow for those.
-    const noShadow: readonly ObstacleKind[] = ["pit", "swing", "laser", "geyser", "tentacle", "arc"];
+    // objects. Holes, glowing hazards and everything that moves or draws its
+    // own contact shading skips the cast shadow; solid statics keep it.
+    const noShadow: readonly ObstacleKind[] = [
+      "pit", "swing", "laser", "geyser", "tentacle", "arc",
+      "phantom", "vine", "gear", "gate", "crusher", "urchin", "talon", "drone", "flare", "comet", "reaper",
+    ];
     if (!noShadow.includes(obs.kind)) {
       const shadow = this.add
         .image(w / 2 + 8, h + obs.elev + 7, "shadowtex")
