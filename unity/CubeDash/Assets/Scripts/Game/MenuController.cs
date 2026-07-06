@@ -43,7 +43,7 @@ namespace CubeDash.Game
             _canvas.transform.SetParent(transform, false);
             var root = _canvas.transform;
 
-            var title = UiFactory.Label(root, "CUBE\nDASH", 360, 1280 * 0.2, 110, 0xffffff, bold: true);
+            var title = UiFactory.Label(root, "DASH THE\nCUBE", 360, 1280 * 0.2, 110, 0xffffff, bold: true);
             var outline = title.gameObject.AddComponent<Outline>();
             outline.effectColor = Px.C(0x26c6da);
             outline.effectDistance = new Vector2(5, -5);

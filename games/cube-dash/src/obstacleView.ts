@@ -85,9 +85,11 @@ export function buildObstaclePreview(scene: Scene, kind: ObstacleKind): Containe
 /** Two-tone faces: lit left, shaded right — same light as the cube bevel. */
 function drawSpike(scene: Scene, container: Container, w: number, h: number): void {
   const g = scene.add.graphics();
-  // Extruded back edge up-right, matching the blocks' light model.
+  // Receding right-back face: a TRIANGLE sharing the front apex — a pyramid
+  // has exactly one apex, so the side face must meet it, not echo it.
+  const d = 8;
   g.fillStyle(0x5c1512);
-  g.fillPoints([{ x: 8, y: h - 8 }, { x: w / 2 + 8, y: -8 }, { x: w + 8, y: h - 8 }], true);
+  g.fillTriangle(w / 2, 0, w + d, h - d, w, h);
   g.fillStyle(0xef5350);
   g.fillPoints([{ x: 0, y: h }, { x: w / 2, y: 0 }, { x: w / 2, y: h }], true);
   g.fillStyle(0x8e2320);
@@ -100,9 +102,17 @@ function drawSpike(scene: Scene, container: Container, w: number, h: number): vo
 /** Air mine: inverted spike hanging in the flight path. */
 function drawAirMine(scene: Scene, container: Container, w: number, h: number): void {
   const g = scene.add.graphics();
-  // Extruded back edge up-right, matching the blocks' light model.
+  // Hanging pyramid: the square top base shows as a lit quad (that face is
+  // flat, so extruding it is correct), while the receding right side is a
+  // TRIANGLE meeting the single bottom apex.
+  const d = 8;
+  g.fillStyle(0xff8a80);
+  g.fillPoints(
+    [{ x: 0, y: 0 }, { x: d, y: -d }, { x: w + d, y: -d }, { x: w, y: 0 }],
+    true,
+  );
   g.fillStyle(0x5c1512);
-  g.fillPoints([{ x: 8, y: -8 }, { x: w + 8, y: -8 }, { x: w / 2 + 8, y: h - 8 }], true);
+  g.fillTriangle(w, 0, w + d, -d, w / 2, h);
   g.fillStyle(0xef5350);
   g.fillPoints([{ x: 0, y: 0 }, { x: w / 2, y: 0 }, { x: w / 2, y: h }], true);
   g.fillStyle(0x8e2320);

@@ -98,7 +98,7 @@ export class MenuScene extends Phaser.Scene {
     }
 
     this.add
-      .text(width / 2, height * 0.2, "CUBE\nDASH", {
+      .text(width / 2, height * 0.2, "DASH THE\nCUBE", {
         fontFamily: "Arial Black, sans-serif",
         fontSize: "110px",
         color: "#ffffff",

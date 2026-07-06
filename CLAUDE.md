@@ -57,7 +57,10 @@ games/word-rush    Game #4, browser-playable. Wordle-style endless streak: word
                    src/logic/words.ts (tested); on-screen QWERTY + physical
                    keyboard; rewarded hint reveals one unsolved letter/round;
                    interstitial when out of guesses. "highScore" = best streak.
-games/cube-dash    Game #5, browser-playable. Geometry-Dash-style auto-runner
+games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
+                   (renamed 2026-07-05; package/dir/storage namespace/script
+                   stay cube-dash on purpose — renaming those breaks scripts
+                   and wipes saved progress). Geometry-Dash-style auto-runner
                    (named to avoid the trademark): pure physics in
                    src/logic/runner.ts (tested) — jump/gravity, block-top
                    landing vs side-hit death, inset spike hitboxes, pattern
@@ -169,7 +172,9 @@ games/cube-dash    Game #5, browser-playable. Geometry-Dash-style auto-runner
                    spawn 2400-4000px apart in obstacle-free spots, first at
                    1500px): doubleJump = 10s of one extra air jump, recharged
                    on landing; gold diamond pickup, aura + "⇈ Ns" badge.
-unity/CubeDash  NATIVE Unity rebuild of cube-dash (2026-07-05, v2): after the
+unity/CubeDash  NATIVE Unity rebuild of cube-dash (2026-07-05, v2; display
+                name/productName "Dash the Cube", folder/asmdef unchanged):
+                after the
                 1:1 port felt clunky, the game was REBUILT Unity-natively —
                 same characters/auras/worlds/music, new everything else. NOT in
                 npm workspaces; no ads; editor-only (Unity 6000.5.2f1

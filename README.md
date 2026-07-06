@@ -11,7 +11,7 @@ wrapped with Capacitor for iOS/Android, monetized with AdMob (ads only).
 - `games/merge-2048` — game #2: classic 4x4 merge, swipe/arrow keys
 - `games/flap-dash` — game #3: endless tap arcade, difficulty ramps with score
 - `games/word-rush` — game #4: Wordle-style 5-letter guesser, endless streak mode
-- `games/cube-dash` — game #5: Geometry-Dash-style auto-runner, tap to jump
+- `games/cube-dash` — game #5: "Dash the Cube", Geometry-Dash-style auto-runner, tap to jump
 - `docs/` — runbooks (start with `phase-0-setup.md`)
 
 ## Commands (repo root)
