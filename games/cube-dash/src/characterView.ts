@@ -176,11 +176,21 @@ export function buildCharacterParts(
     parts.push(scene.add.rectangle(0, s / 2 - 7, s - 12, 5, spec.dark));
     parts.push(scene.add.rectangle(s / 2 - 7, 0, 5, s - 12, spec.dark));
     parts.push(scene.add.rectangle(0, 0, s - 26, s - 26, spec.face));
+    // Glass sheen across the upper-left, ambient occlusion pooling at the
+    // bottom — the face reads as a curved, lit surface instead of a sticker.
+    const sheen = scene.add.graphics();
+    sheen.fillStyle(0xffffff, 0.12);
+    sheen.fillTriangle(-s / 2 + 5, -s / 2 + 5, s / 2 - 9, -s / 2 + 5, -s / 2 + 5, s / 2 - 9);
+    parts.push(sheen);
+    parts.push(scene.add.rectangle(0, s / 2 - 11, s - 14, 6, 0x000000, 0.22));
   } else if (spec.shape === "ball") {
     parts.push(scene.add.circle(0, 0, s / 2, spec.color).setStrokeStyle(5, spec.dark));
-    parts.push(scene.add.circle(0, 0, s / 2 - 12, spec.face));
-    // Specular highlight sells the sphere.
-    parts.push(scene.add.circle(-s / 5, -s / 5, s / 7, 0xffffff, 0.55));
+    // Sphere shading: shadowed underside ring, lit face offset toward the
+    // light, then a two-step specular (broad + hot core).
+    parts.push(scene.add.circle(3, 3, s / 2 - 7, spec.dark, 0.55));
+    parts.push(scene.add.circle(-2, -2, s / 2 - 12, spec.face));
+    parts.push(scene.add.circle(-s / 5, -s / 5, s / 7, 0xffffff, 0.5));
+    parts.push(scene.add.circle(-s / 4.4, -s / 4.4, s / 16, 0xffffff, 0.9));
   } else {
     // diamond: rotated squares, bounding box ≈ the player box.
     const d = s * 0.78;
@@ -188,6 +198,14 @@ export function buildCharacterParts(
       scene.add.rectangle(0, 0, d, d, spec.color).setStrokeStyle(5, spec.dark).setAngle(45),
     );
     parts.push(scene.add.rectangle(0, 0, d - 20, d - 20, spec.face).setAngle(45));
+    // Cut-gem facets: shaded right half, lit upper-left wedge.
+    const facetR = ((d - 20) * Math.SQRT2) / 2;
+    const facets = scene.add.graphics();
+    facets.fillStyle(spec.dark, 0.3);
+    facets.fillTriangle(0, -facetR, facetR, 0, 0, facetR);
+    facets.fillStyle(0xffffff, 0.14);
+    facets.fillTriangle(0, -facetR, -facetR, 0, 0, 0);
+    parts.push(facets);
     parts.push(scene.add.rectangle(0, -d / 2 + 4, 10, 10, spec.light).setAngle(45));
   }
 

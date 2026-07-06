@@ -16,6 +16,8 @@ export function floatBanner(
       stroke: "#000000",
       strokeThickness: 8,
       align: "center",
+      // Device-resolution rasterization keeps the big banner glyphs crisp.
+      resolution: Math.min(window.devicePixelRatio || 1, 3),
     })
     .setOrigin(0.5)
     .setScale(0.3)

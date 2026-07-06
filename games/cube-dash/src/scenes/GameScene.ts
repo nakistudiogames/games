@@ -777,6 +777,9 @@ export class GameScene extends Phaser.Scene {
     const container = this.add.container(p.x, p.y).setDepth(9);
     const diamond = this.add.rectangle(0, 0, 40, 40, spec.color).setStrokeStyle(4, 0xffffff, 0.9);
     diamond.setAngle(45);
+    // Gem facet: lit upper-left wedge gives the pickup depth as it spins.
+    const facet = this.add.rectangle(-5, -5, 18, 18, 0xffffff, 0.35).setAngle(45);
+    this.tweens.add({ targets: facet, angle: 405, duration: 1800, repeat: -1 });
     const glyph = this.add
       .text(0, 0, "⇈", {
         fontFamily: "Arial Black, sans-serif",
@@ -784,7 +787,7 @@ export class GameScene extends Phaser.Scene {
         color: "#12141c",
       })
       .setOrigin(0.5);
-    container.add([diamond, glyph]);
+    container.add([diamond, facet, glyph]);
     this.tweens.add({ targets: diamond, angle: 405, duration: 1800, repeat: -1 });
     // Visual bob only — the logic-side pickup box stays at p.y.
     this.tweens.add({

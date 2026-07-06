@@ -33,9 +33,12 @@ packages/ads    @mg/ads  — AdsService interface; NoopAds on web, AdmobAds on n
                            (@capacitor-community/admob: UMP consent, interstitial
                            cooldown default 90s, rewarded via event listeners —
                            NOT yet validated on a real device)
-packages/ui     @mg/ui   — Phaser helpers: floatBanner (celebration text),
-                           textButton (padded text button); both cast drop
-                           shadows (setShadow) for a subtle 3D depth cue
+packages/ui     @mg/ui   — Phaser helpers: floatBanner (celebration text,
+                           drop shadow, device-res text); textButton (3D
+                           extruded rounded button: gradient cap on a darker
+                           slab, cap sinks on press; returns a CONTAINER, not
+                           Text — callers only add/store it, don't chain Text
+                           methods)
 games/block-blast  Pilot game, browser-playable. Pure logic in src/logic/ (Board,
                    pieces) with vitest tests in test/; Phaser scenes in src/scenes/.
                    Uses Google's public TEST ad unit IDs (src/ads.ts, testMode: true).

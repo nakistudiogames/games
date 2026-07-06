@@ -53,6 +53,20 @@ export class MenuScene extends Phaser.Scene {
     const unlocked = this.unlockedLevel();
     this.selected = Math.min(storage.get("lastPlayed", 1), unlocked);
 
+    // Refined backdrop: subtle vertical gradient plus a faint static
+    // starfield instead of a flat fill.
+    const bg = this.add.graphics();
+    bg.fillGradientStyle(0x1a2138, 0x1a2138, 0x0b0e18, 0x0b0e18, 1);
+    bg.fillRect(0, 0, width, height);
+    const stars = this.add.graphics();
+    for (let i = 0; i < 42; i++) {
+      // Cheap deterministic scatter — no rng needed for set dressing.
+      const sx = (i * 131 + 37) % width;
+      const sy = (i * 337 + 91) % height;
+      stars.fillStyle(0xffffff, 0.05 + ((i * 53) % 20) / 200);
+      stars.fillRect(sx, sy, 2 + (i % 2), 2 + (i % 2));
+    }
+
     // Obstacle encyclopedia — every hazard met so far, plus teasers ahead.
     textButton(
       this,
@@ -93,6 +107,7 @@ export class MenuScene extends Phaser.Scene {
         strokeThickness: 10,
       })
       .setOrigin(0.5)
+      .setLetterSpacing(6)
       .setShadow(0, 10, "#000000", 12, false, true);
 
     this.levelWord = this.add
