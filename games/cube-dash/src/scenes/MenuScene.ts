@@ -8,6 +8,24 @@ import { attachAura, buildCharacterParts } from "../characterView";
 
 export const storage = new GameStorage("cube-dash");
 
+// --- Dev-only god mode -------------------------------------------------
+// Available ONLY on the Vite dev server; the toggle button never renders in
+// a production/Capacitor build, and even a stale stored flag has no effect
+// off localhost. While on, every level is selectable, and level completions
+// do NOT touch stored progress (unlockedLevel/bestPct) — toggling off drops
+// you back exactly where you really were.
+
+/** Levels browsable in god mode (worlds cycle, so any cap works). */
+const GOD_MODE_MAX_LEVEL = 99;
+
+export function godModeAvailable(): boolean {
+  return typeof location !== "undefined" && location.host === "localhost:5173";
+}
+
+export function godModeOn(): boolean {
+  return godModeAvailable() && storage.get("godMode", false);
+}
+
 export class MenuScene extends Phaser.Scene {
   private selected = 1;
   private levelWord!: Phaser.GameObjects.Text;
@@ -22,10 +40,34 @@ export class MenuScene extends Phaser.Scene {
     super("menu");
   }
 
+  /** Highest selectable level: real progress, or everything in god mode. */
+  private unlockedLevel(): number {
+    return godModeOn() ? GOD_MODE_MAX_LEVEL : storage.get("unlockedLevel", 1);
+  }
+
   create(): void {
     const { width, height } = this.scale;
-    const unlocked = storage.get("unlockedLevel", 1);
+    const unlocked = this.unlockedLevel();
     this.selected = Math.min(storage.get("lastPlayed", 1), unlocked);
+
+    // Dev-only god mode toggle (never rendered off the Vite dev server).
+    if (godModeAvailable()) {
+      const on = storage.get("godMode", false);
+      textButton(
+        this,
+        width - 120,
+        56,
+        on ? "⚡ GOD: ON" : "⚡ GOD: OFF",
+        on
+          ? { text: "#ffd54f", background: "#3a2f10" }
+          : { text: "#5c667d", background: "#181d2b" },
+        () => {
+          storage.set("godMode", !on);
+          this.scene.restart(); // re-reads progress → selection re-clamps
+        },
+        "26px",
+      );
+    }
 
     this.add
       .text(width / 2, height * 0.2, "CUBE\nDASH", {
@@ -89,7 +131,7 @@ export class MenuScene extends Phaser.Scene {
       this.refresh();
     });
     textButton(this, width / 2 + 220, height * 0.455, "▶", { text: "#ffffff", background: "#232b3e" }, () => {
-      this.selected = Math.min(storage.get("unlockedLevel", 1), this.selected + 1);
+      this.selected = Math.min(this.unlockedLevel(), this.selected + 1);
       this.refresh();
     });
 
@@ -162,8 +204,8 @@ export class MenuScene extends Phaser.Scene {
   /** Overlay grid to jump straight to any unlocked level. */
   private openLevelGrid(): void {
     const { width, height } = this.scale;
-    const unlocked = storage.get("unlockedLevel", 1);
-    const total = unlocked + 4; // peek a few locked levels ahead
+    const unlocked = this.unlockedLevel();
+    const total = godModeOn() ? unlocked : unlocked + 4; // peek a few locked levels ahead
     const perPage = 20; // 5 x 4 tiles
     const pages = Math.ceil(total / perPage);
     let page = Math.min(Math.floor((this.selected - 1) / perPage), pages - 1);
@@ -267,7 +309,7 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private refresh(): void {
-    const unlocked = storage.get("unlockedLevel", 1);
+    const unlocked = this.unlockedLevel();
     const hex = `#${levelColor(this.selected).toString(16).padStart(6, "0")}`;
     this.levelWord.setColor(hex);
     this.levelLabel.setText(`${this.selected}`).setColor(hex);

@@ -122,8 +122,14 @@ games/cube-dash    Game #5, browser-playable. Geometry-Dash-style auto-runner
                    600 → spike3 from level 4), gaps ×levelGapScale (1.2→0.75,
                    clearability tested levels 1-25), no spawns in last 1200px
                    runway. HUD: % progress + top progress bar. Storage keys:
-                   "unlockedLevel", "lastPlayed", "bestPct:<n>", "character"
-                   ("highScore"/"bestLevel" are legacy, unused). Characters:
+                   "unlockedLevel", "lastPlayed", "bestPct:<n>", "character",
+                   "godMode" ("highScore"/"bestLevel" are legacy, unused).
+                   God mode: dev-only toggle button in the menu, rendered and
+                   effective ONLY when location.host === "localhost:5173"
+                   (godModeAvailable/godModeOn in MenuScene.ts) — unlocks all
+                   levels for selection and suppresses progress writes
+                   (unlockedLevel bump + bestPct) so toggling off restores
+                   real progress untouched. Characters:
                    cosmetic skins in src/characters.ts (pure data/rules,
                    tested) + characterView.ts (Phaser drawing, shared by game
                    and menu preview) — dash/blaze/orb/prism/bolt (cube/ball/

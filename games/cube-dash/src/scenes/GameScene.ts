@@ -33,7 +33,7 @@ import { attachAura, buildCharacterParts } from "../characterView";
 import { musicForLevel, stopAllMusic } from "../music";
 import { worldForLevel } from "../worlds";
 import type { WorldTheme } from "../worlds";
-import { storage } from "./MenuScene";
+import { godModeOn, storage } from "./MenuScene";
 
 const WORLD_WIDTH = 720;
 const WORLD_HEIGHT = 1280;
@@ -1137,7 +1137,8 @@ export class GameScene extends Phaser.Scene {
   private bumpBestPct(pct: number): number {
     const key = `bestPct:${this.levelNum}`;
     const best = Math.max(storage.get(key, 0), pct);
-    storage.set(key, best);
+    // God-mode runs never persist — real progress stays exactly as it was.
+    if (!godModeOn()) storage.set(key, best);
     return best;
   }
 
@@ -1149,7 +1150,9 @@ export class GameScene extends Phaser.Scene {
     this.trail.emitting = false;
     this.bumpBestPct(100);
     const unlocked = storage.get("unlockedLevel", 1);
-    if (this.levelNum + 1 > unlocked) storage.set("unlockedLevel", this.levelNum + 1);
+    if (!godModeOn() && this.levelNum + 1 > unlocked) {
+      storage.set("unlockedLevel", this.levelNum + 1);
+    }
     sfx.clear(4);
     stopAllMusic();
     this.sparkle.explode(30, this.playerView.x, this.playerView.y);
