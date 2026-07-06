@@ -1,13 +1,33 @@
 import Phaser from "phaser";
 import { GameStorage, sfx } from "@mg/core";
 import { textButton } from "@mg/ui";
-import { KIND_UNLOCK_LEVEL, LEVELS_PER_WORLD, isFinaleLevel, levelColor, levelDurationSec } from "../logic/runner";
-import type { ObstacleKind } from "../logic/runner";
+import {
+  FLIP_MIN_LEVEL,
+  KIND_UNLOCK_LEVEL,
+  LEVELS_PER_WORLD,
+  MIRROR_MIN_LEVEL,
+  PAD_MIN_LEVEL,
+  POWERUP_UNLOCK_LEVEL,
+  POWER_UPS,
+  STRIP_MIN_LEVEL,
+  isFinaleLevel,
+  levelColor,
+  levelDurationSec,
+} from "../logic/runner";
+import type { BoostKind, ObstacleKind, PowerUpKind, TrackZoneKind } from "../logic/runner";
 import { worldForLevel } from "../worlds";
 import { CHARACTERS, characterById, isCharacterUnlocked } from "../characters";
 import { attachAura, buildCharacterParts } from "../characterView";
-import { OBSTACLE_INFO } from "../obstacles";
+import { BOOST_INFO, OBSTACLE_INFO, POWERUP_INFO, ZONE_INFO } from "../obstacles";
 import { OBSTACLE_PREVIEW, buildObstaclePreview } from "../obstacleView";
+import {
+  BOOST_PREVIEW,
+  ZONE_COLORS,
+  ZONE_GATE_SIZE,
+  buildBoostView,
+  buildPickupView,
+  buildZoneGateView,
+} from "../trackView";
 import { ACHIEVEMENTS, isEarned } from "../achievements";
 import { ensureWorldTextures } from "../worldView";
 
@@ -30,6 +50,15 @@ export function godModeAvailable(): boolean {
 export function godModeOn(): boolean {
   return godModeAvailable() && storage.get("godMode", false);
 }
+
+type GuideCategory = "hazards" | "powerups" | "boosters" | "gates";
+
+const GUIDE_CATEGORIES: ReadonlyArray<{ id: GuideCategory; label: string; x: number }> = [
+  { id: "hazards", label: "HAZARDS", x: 105 },
+  { id: "powerups", label: "POWER-UPS", x: 297 },
+  { id: "boosters", label: "BOOSTS", x: 480 },
+  { id: "gates", label: "GATES", x: 632 },
+];
 
 export class MenuScene extends Phaser.Scene {
   private selected = 1;
@@ -368,19 +397,99 @@ export class MenuScene extends Phaser.Scene {
   }
 
   /**
-   * Overlay listing every obstacle kind in unlock order, with live art from
-   * obstacleView. Kinds beyond the player's progress show as "???" teasers
-   * (god mode reveals everything, like it unlocks every level).
+   * All guide rows — hazards, power-ups, boosters, gates — in unlock order
+   * per category, each with its live-art preview builder. Entries beyond the
+   * player's progress render as "???" teasers (god mode reveals everything).
    */
+  private guideEntries(): Array<{
+    category: GuideCategory;
+    name: string;
+    blurb: string;
+    tag: string;
+    lockText: string;
+    unlockLevel: number;
+    w: number;
+    h: number;
+    color: string;
+    build: () => Phaser.GameObjects.Container;
+  }> {
+    const hexOf = (c: number): string => `#${c.toString(16).padStart(6, "0")}`;
+    const entries: ReturnType<MenuScene["guideEntries"]> = [];
+    // Hazards, in unlock order.
+    for (const [kind, lvl] of (Object.entries(KIND_UNLOCK_LEVEL) as Array<[ObstacleKind, number]>).sort(
+      (a, b) => a[1] - b[1],
+    )) {
+      const worldN = Math.floor((lvl - 1) / LEVELS_PER_WORLD) + 1;
+      const spec = OBSTACLE_PREVIEW[kind];
+      entries.push({
+        category: "hazards",
+        ...OBSTACLE_INFO[kind],
+        tag: `world ${worldN}`,
+        lockText: `Reach world ${worldN} to identify this hazard.`,
+        unlockLevel: lvl,
+        w: spec.w,
+        h: kind === "pit" ? spec.h + 150 : spec.h, // trench digs down
+        color: hexOf(levelColor(lvl)),
+        build: () => buildObstaclePreview(this, kind),
+      });
+    }
+    // Power-up pickups.
+    for (const [kind, lvl] of Object.entries(POWERUP_UNLOCK_LEVEL) as Array<[PowerUpKind, number]>) {
+      entries.push({
+        category: "powerups",
+        ...POWERUP_INFO[kind],
+        tag: `level ${lvl}`,
+        lockText: `Reach level ${lvl} to unlock this pickup.`,
+        unlockLevel: lvl,
+        w: 56,
+        h: 56,
+        color: hexOf(POWER_UPS[kind].color),
+        build: () => this.add.container(0, 0, [buildPickupView(this, kind).setPosition(28, 28)]),
+      });
+    }
+    // Launch pads and dash strips.
+    const boostUnlocks: Array<[BoostKind, number]> = [["pad", PAD_MIN_LEVEL], ["strip", STRIP_MIN_LEVEL]];
+    for (const [kind, lvl] of boostUnlocks) {
+      const { w, h } = BOOST_PREVIEW[kind];
+      entries.push({
+        category: "boosters",
+        ...BOOST_INFO[kind],
+        tag: `level ${lvl}`,
+        lockText: `Reach level ${lvl} to meet this booster.`,
+        unlockLevel: lvl,
+        w,
+        h,
+        color: kind === "pad" ? "#ffb300" : "#00e5ff",
+        build: () => buildBoostView(this, kind),
+      });
+    }
+    // Mirror / gravity gates.
+    const zoneUnlocks: Array<[TrackZoneKind, number]> = [["mirror", MIRROR_MIN_LEVEL], ["flip", FLIP_MIN_LEVEL]];
+    for (const [kind, lvl] of zoneUnlocks) {
+      entries.push({
+        category: "gates",
+        ...ZONE_INFO[kind],
+        tag: `level ${lvl}`,
+        lockText: `Reach level ${lvl} to pass through one.`,
+        unlockLevel: lvl,
+        w: ZONE_GATE_SIZE.w,
+        h: ZONE_GATE_SIZE.h,
+        color: hexOf(ZONE_COLORS[kind]),
+        build: () => buildZoneGateView(this, kind),
+      });
+    }
+    return entries;
+  }
+
   private openEncyclopedia(): void {
     const { width, height } = this.scale;
     const unlocked = this.unlockedLevel();
-    const kinds = (Object.entries(KIND_UNLOCK_LEVEL) as Array<[ObstacleKind, number]>).sort(
-      (a, b) => a[1] - b[1],
-    );
+    const all = this.guideEntries();
     const perPage = 5;
-    const pages = Math.ceil(kinds.length / perPage);
+    let category: GuideCategory = "hazards";
     let page = 0;
+    const current = (): typeof all => all.filter((e) => e.category === category);
+    const pages = (): number => Math.max(1, Math.ceil(current().length / perPage));
 
     const overlay = this.add.container(0, 0).setDepth(100);
     overlay.add(
@@ -388,7 +497,7 @@ export class MenuScene extends Phaser.Scene {
     );
     overlay.add(
       this.add
-        .text(width / 2, 150, "OBSTACLES", {
+        .text(width / 2, 130, "GUIDE", {
           fontFamily: "Arial Black, sans-serif",
           fontSize: "52px",
           color: "#ffffff",
@@ -396,6 +505,35 @@ export class MenuScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setShadow(0, 6, "#000000", 8, false, true),
     );
+
+    // Clickable category tabs — rebuilt on switch so the active one lights up.
+    const tabs = this.add.container(0, 0);
+    overlay.add(tabs);
+    const renderTabs = (): void => {
+      tabs.removeAll(true);
+      for (const cat of GUIDE_CATEGORIES) {
+        const active = cat.id === category;
+        tabs.add(
+          textButton(
+            this,
+            cat.x,
+            222,
+            cat.label,
+            active
+              ? { text: "#12141c", background: "#8a93a8" }
+              : { text: "#8a93a8", background: "#181d2b" },
+            () => {
+              if (category === cat.id) return;
+              category = cat.id;
+              page = 0;
+              renderTabs();
+              renderPage();
+            },
+            "22px",
+          ),
+        );
+      }
+    };
     const rows = this.add.container(0, 0);
     overlay.add(rows);
     const pageText = this.add
@@ -409,11 +547,9 @@ export class MenuScene extends Phaser.Scene {
 
     const renderPage = (): void => {
       rows.removeAll(true);
-      kinds.slice(page * perPage, (page + 1) * perPage).forEach(([kind, lvl], i) => {
-        const y = 320 + i * 168;
-        const worldN = Math.floor((lvl - 1) / LEVELS_PER_WORLD) + 1;
-        const isKnown = lvl <= unlocked;
-        const info = OBSTACLE_INFO[kind];
+      current().slice(page * perPage, (page + 1) * perPage).forEach((e, i) => {
+        const y = 340 + i * 168;
+        const isKnown = e.unlockLevel <= unlocked;
 
         rows.add(
           this.add
@@ -422,28 +558,26 @@ export class MenuScene extends Phaser.Scene {
         );
 
         // Live-art preview, scaled to fit the left column of the card.
-        const spec = OBSTACLE_PREVIEW[kind];
-        const visualH = kind === "pit" ? spec.h + 150 : spec.h; // trench digs down
-        const scale = Math.min(1, 116 / visualH, 150 / spec.w);
-        const pv = buildObstaclePreview(this, kind)
+        const scale = Math.min(1, 116 / e.h, 150 / e.w);
+        const pv = e
+          .build()
           .setScale(scale)
-          .setPosition(130 - (spec.w * scale) / 2, y - (visualH * scale) / 2);
+          .setPosition(130 - (e.w * scale) / 2, y - (e.h * scale) / 2);
         if (!isKnown) pv.setAlpha(0.15);
         rows.add(pv);
 
-        const hex = `#${levelColor(lvl).toString(16).padStart(6, "0")}`;
         rows.add(
           this.add
-            .text(240, y - 56, isKnown ? info.name : "???", {
+            .text(240, y - 56, isKnown ? e.name : "???", {
               fontFamily: "Arial Black, sans-serif",
               fontSize: "32px",
-              color: isKnown ? hex : "#5c667d",
+              color: isKnown ? e.color : "#5c667d",
             })
             .setOrigin(0, 0.5),
         );
         rows.add(
           this.add
-            .text(668, y - 56, `world ${worldN}`, {
+            .text(668, y - 56, e.tag, {
               fontFamily: "Arial, sans-serif",
               fontSize: "24px",
               color: "#5c667d",
@@ -451,7 +585,7 @@ export class MenuScene extends Phaser.Scene {
             .setOrigin(1, 0.5),
         );
         rows.add(
-          this.add.text(240, y - 34, isKnown ? info.blurb : `Reach world ${worldN} to identify this hazard.`, {
+          this.add.text(240, y - 34, isKnown ? e.blurb : e.lockText, {
             fontFamily: "Arial, sans-serif",
             fontSize: "23px",
             color: isKnown ? "#aab3c7" : "#5c667d",
@@ -460,23 +594,21 @@ export class MenuScene extends Phaser.Scene {
           }),
         );
       });
-      pageText.setText(pages > 1 ? `page ${page + 1} / ${pages}` : "");
+      pageText.setText(pages() > 1 ? `page ${page + 1} / ${pages()}` : "");
     };
 
-    if (pages > 1) {
-      overlay.add(
-        textButton(this, width / 2 - 150, height - 165, "◀", { text: "#ffffff", background: "#232b3e" }, () => {
-          page = Math.max(0, page - 1);
-          renderPage();
-        }, "32px"),
-      );
-      overlay.add(
-        textButton(this, width / 2 + 150, height - 165, "▶", { text: "#ffffff", background: "#232b3e" }, () => {
-          page = Math.min(pages - 1, page + 1);
-          renderPage();
-        }, "32px"),
-      );
-    }
+    overlay.add(
+      textButton(this, width / 2 - 150, height - 165, "◀", { text: "#ffffff", background: "#232b3e" }, () => {
+        page = Math.max(0, page - 1);
+        renderPage();
+      }, "32px"),
+    );
+    overlay.add(
+      textButton(this, width / 2 + 150, height - 165, "▶", { text: "#ffffff", background: "#232b3e" }, () => {
+        page = Math.min(pages() - 1, page + 1);
+        renderPage();
+      }, "32px"),
+    );
     overlay.add(
       textButton(
         this,
@@ -488,6 +620,7 @@ export class MenuScene extends Phaser.Scene {
         "34px",
       ),
     );
+    renderTabs();
     renderPage();
   }
 

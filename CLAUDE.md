@@ -199,14 +199,20 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    character change); @mg/core haptics (navigator.vibrate
                    tap/thud/win, no-op where unsupported); sfx.setMuted +
                    🔊SFX toggles in menu + pause overlay.
-                   Obstacle encyclopedia: 📖 GUIDE button in the menu → paged
-                   overlay of all kinds in unlock order; entries (name+blurb)
-                   are pure data in src/obstacles.ts (Record<ObstacleKind,…>
-                   + test force an entry per kind); art shared with the game
-                   via src/obstacleView.ts (drawObstacle/buildObstaclePreview
-                   — GameScene's draw methods were extracted there, same
-                   pattern as characterView); kinds beyond unlockedLevel show
-                   as "??? / reach world N" teasers.
+                   Guide (📖 GUIDE button in menu): tabbed overlay covering
+                   ALL track content — clickable category tabs HAZARDS (21
+                   kinds, unlock order, 5 pages) / POWER-UPS (3) / BOOSTS
+                   (pad+strip) / GATES (mirror+gravity), per-category
+                   pagination, active tab highlighted (GUIDE_CATEGORIES +
+                   generic guideEntries() w/ category field in MenuScene);
+                   entries are pure data in src/obstacles.ts (OBSTACLE_INFO +
+                   POWERUP_INFO/BOOST_INFO/ZONE_INFO, Record<Kind,…> + tests
+                   force real entries, names unique across the whole guide);
+                   art shared with the game: src/obstacleView.ts (obstacles)
+                   and src/trackView.ts (buildPickupView/buildBoostView/
+                   buildZoneGateView + ZONE_COLORS/BOOST_PREVIEW — extracted
+                   from GameScene, which now consumes them too); locked rows
+                   show "??? / reach world-or-level N" teasers.
                    God mode: dev-only toggle button in the menu, rendered and
                    effective ONLY when location.host === "localhost:5173"
                    (godModeAvailable/godModeOn in MenuScene.ts) — unlocks all

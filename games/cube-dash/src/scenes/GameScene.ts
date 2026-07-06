@@ -62,6 +62,14 @@ import { characterById } from "../characters";
 import { attachAura, buildCharacterParts } from "../characterView";
 import { musicForLevel, stopAllMusic } from "../music";
 import { drawObstacle } from "../obstacleView";
+import {
+  BOOST_PREVIEW,
+  ZONE_COLORS,
+  ZONE_GATE_SIZE,
+  buildBoostView,
+  buildPickupView,
+  buildZoneGateView,
+} from "../trackView";
 import { ensureWorldTextures } from "../worldView";
 import { worldForLevel } from "../worlds";
 import type { WorldTheme } from "../worlds";
@@ -80,7 +88,6 @@ const FIRST_POWERUP_PX = 1500;
 const CLEAR_RUNWAY_PX = 1200;
 /** Vertical mirror line for gravity-flip zones: ground 1000 ↔ ceiling 320. */
 const FLIP_PIVOT_Y = 660;
-const ZONE_COLORS: Record<TrackZoneKind, number> = { mirror: 0xeceff1, flip: 0xb388ff };
 
 interface ObstacleView {
   obs: Obstacle;
@@ -851,13 +858,11 @@ export class GameScene extends Phaser.Scene {
   private buildZoneGates(): void {
     for (const z of this.zones) {
       for (const at of [z.start, z.end]) {
-        const color = ZONE_COLORS[z.kind];
         const gate = this.add.container(WORLD_WIDTH + 200, 0);
-        gate.add(this.add.rectangle(0, GROUND_Y - 190, 30, 380, color, 0.1).setOrigin(0.5, 0));
-        const beam = this.add.rectangle(0, GROUND_Y - 190, 10, 380, color, 0.55).setOrigin(0.5, 0);
-        gate.add(beam);
-        gate.add(this.add.circle(0, GROUND_Y - 190, 10, color, 0.9));
-        this.tweens.add({ targets: beam, alpha: 0.25, duration: 420, yoyo: true, repeat: -1 });
+        // Shared art (trackView) — the guide previews the identical pillar.
+        const pillar = buildZoneGateView(this, z.kind);
+        pillar.setPosition(-ZONE_GATE_SIZE.w / 2, GROUND_Y - 190);
+        gate.add(pillar);
         gate.setVisible(false);
         this.trackObjects.add(gate);
         this.zoneGates.push({ at, view: gate });
@@ -869,33 +874,11 @@ export class GameScene extends Phaser.Scene {
   private buildBoosts(): void {
     for (const b of trackBoosts(this.levelNum, this.levelLengthPx)) {
       const view = this.add.container(WORLD_WIDTH + 400, 0).setVisible(false);
-      if (b.kind === "pad") {
-        // Amber launch wedge on the track.
-        const g = this.add.graphics();
-        g.fillStyle(0x8f5b00, 1);
-        g.fillRect(-45, GROUND_Y - 8, 90, 8);
-        g.fillStyle(0xffb300, 1);
-        g.fillTriangle(-45, GROUND_Y - 8, 45, GROUND_Y - 8, 0, GROUND_Y - 30);
-        g.fillStyle(0xffe082, 1);
-        g.fillTriangle(-22, GROUND_Y - 12, 22, GROUND_Y - 12, 0, GROUND_Y - 26);
-        view.add(g);
-        const chevron = this.add
-          .text(0, GROUND_Y - 52, "▲", { fontSize: "30px", color: "#ffb300" })
-          .setOrigin(0.5);
-        view.add(chevron);
-        this.tweens.add({ targets: chevron, y: GROUND_Y - 66, alpha: 0.4, duration: 500, yoyo: true, repeat: -1 });
-      } else {
-        // Cyan dash strip flush with the ground.
-        const g = this.add.graphics();
-        g.fillStyle(0x00e5ff, 0.25);
-        g.fillRect(-100, GROUND_Y - 10, 200, 10);
-        g.fillStyle(0x00e5ff, 0.9);
-        for (let x = -90; x < 90; x += 40) {
-          g.fillTriangle(x, GROUND_Y - 4, x, GROUND_Y - 16, x + 18, GROUND_Y - 10);
-        }
-        view.add(g);
-        this.tweens.add({ targets: g, alpha: 0.5, duration: 300, yoyo: true, repeat: -1 });
-      }
+      // Shared art (trackView) — the guide previews the identical element.
+      const { w, h } = BOOST_PREVIEW[b.kind];
+      const art = buildBoostView(this, b.kind);
+      art.setPosition(-w / 2, GROUND_Y - h);
+      view.add(art);
       this.trackObjects.add(view);
       this.boosts.push({ b, view, used: false });
     }
@@ -1038,23 +1021,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   private buildPowerUpView(p: PowerUp): Phaser.GameObjects.Container {
-    const spec = POWER_UPS[p.kind];
-    const container = this.add.container(p.x, p.y);
+    // Shared art (trackView) — the guide previews the identical gem.
+    const container = this.add.container(p.x, p.y, [buildPickupView(this, p.kind)]);
     this.trackObjects.add(container);
-    const diamond = this.add.rectangle(0, 0, 40, 40, spec.color).setStrokeStyle(4, 0xffffff, 0.9);
-    diamond.setAngle(45);
-    // Gem facet: lit upper-left wedge gives the pickup depth as it spins.
-    const facet = this.add.rectangle(-5, -5, 18, 18, 0xffffff, 0.35).setAngle(45);
-    this.tweens.add({ targets: facet, angle: 405, duration: 1800, repeat: -1 });
-    const glyph = this.add
-      .text(0, 0, spec.glyph, {
-        fontFamily: "Arial Black, sans-serif",
-        fontSize: "26px",
-        color: "#12141c",
-      })
-      .setOrigin(0.5);
-    container.add([diamond, facet, glyph]);
-    this.tweens.add({ targets: diamond, angle: 405, duration: 1800, repeat: -1 });
     // Visual bob only — the logic-side pickup box stays at p.y.
     this.tweens.add({
       targets: container,

@@ -1,4 +1,4 @@
-import type { ObstacleKind } from "./logic/runner";
+import type { BoostKind, ObstacleKind, PowerUpKind, TrackZoneKind } from "./logic/runner";
 
 /**
  * Encyclopedia entries — pure data, no Phaser (drawing lives in
@@ -96,5 +96,45 @@ export const OBSTACLE_INFO: Record<ObstacleKind, ObstacleInfo> = {
   reaper: {
     name: "Chrome Reaper",
     blurb: "A scythe that sweeps the track in pulses. The post never moves — the blade decides your timing.",
+  },
+};
+
+// The guide also covers the friendly side of the track. Same Record trick:
+// the compiler demands an entry for every kind, tests reject empty ones.
+
+export const POWERUP_INFO: Record<PowerUpKind, ObstacleInfo> = {
+  doubleJump: {
+    name: "Double Jump",
+    blurb: "Ten seconds of one extra jump in mid-air, recharged every time you land. Save it for the layered stuff.",
+  },
+  shield: {
+    name: "Shield",
+    blurb: "For fifteen seconds, one fatal hit shatters the shield instead of you — then you just keep running.",
+  },
+  slowmo: {
+    name: "Slow-Mo",
+    blurb: "The whole world drops to 85% speed for six seconds. Breathe, read the pattern, react.",
+  },
+};
+
+export const BOOST_INFO: Record<BoostKind, ObstacleInfo> = {
+  pad: {
+    name: "Launch Pad",
+    blurb: "Run over it to rocket into a jump half again higher than normal. It holds fire under hanging hazards.",
+  },
+  strip: {
+    name: "Dash Strip",
+    blurb: "A burst of speed for the next stretch — your jumps carry further while the rush lasts.",
+  },
+};
+
+export const ZONE_INFO: Record<TrackZoneKind, ObstacleInfo> = {
+  mirror: {
+    name: "Mirror Gate",
+    blurb: "Between these pillars the view flips and you run the other way. The track itself never changes — trust your timing.",
+  },
+  flip: {
+    name: "Gravity Gate",
+    blurb: "Between these pillars gravity inverts: you run the ceiling and jump downward until the exit gate.",
   },
 };
