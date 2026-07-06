@@ -152,6 +152,7 @@ export class GameScene extends Phaser.Scene {
   private distancePx = 0;
   private scoreText!: Phaser.GameObjects.Text;
   private timerText!: Phaser.GameObjects.Text;
+  private metersText!: Phaser.GameObjects.Text;
   private elapsedMs = 0;
   private levelText!: Phaser.GameObjects.Text;
   private powerBadge!: Phaser.GameObjects.Text;
@@ -224,9 +225,10 @@ export class GameScene extends Phaser.Scene {
     this.buildBoosts();
     this.buildHud();
 
-    // "ATTEMPT N" tag sits on the track and scrolls away with it.
+    // "ATTEMPT N" tag sits on the track and scrolls away with it (the
+    // TAP TO START block lives higher up, clear of it).
     this.attemptText = this.add
-      .text(WORLD_WIDTH * 0.62, GROUND_Y - 320, `ATTEMPT ${attempts}`, {
+      .text(WORLD_WIDTH / 2, GROUND_Y - 320, `ATTEMPT ${attempts}`, {
         fontFamily: "Arial Black, sans-serif",
         fontSize: "56px",
         color: this.levelColorHex(this.levelNum),
@@ -578,6 +580,17 @@ export class GameScene extends Phaser.Scene {
       .setDepth(20);
     this.timerText.setShadow(0, 4, "#000000", 6, false, true);
 
+    // Distance run, mirroring the timer on the other side of the %.
+    this.metersText = this.add
+      .text(WORLD_WIDTH / 2 - 145, 110, "0m", {
+        fontFamily: "Arial, sans-serif",
+        fontSize: "30px",
+        color: "#8a93a8",
+      })
+      .setOrigin(1, 0.5)
+      .setDepth(20);
+    this.metersText.setShadow(0, 4, "#000000", 6, false, true);
+
     this.levelText = this.add
       .text(WORLD_WIDTH / 2, 172, `LEVEL ${this.levelNum}`, {
         fontFamily: "Arial, sans-serif",
@@ -639,7 +652,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.readyText = this.add
-      .text(WORLD_WIDTH / 2, 700, `${this.world.name}\nLEVEL ${this.levelNum}\nTAP TO START`, {
+      .text(WORLD_WIDTH / 2, 460, `${this.world.name}\nLEVEL ${this.levelNum}\nTAP TO START`, {
         fontFamily: "Arial, sans-serif",
         fontSize: "52px",
         color: "#a5d6a7",
@@ -787,6 +800,7 @@ export class GameScene extends Phaser.Scene {
 
     this.scoreText.setText(`${this.progressPct()}%`);
     this.timerText.setText(`${(this.elapsedMs / 1000).toFixed(1)}s`);
+    this.metersText.setText(`${Math.floor(this.distancePx / 10)}m`);
     this.progressFill.setScale(Math.min(1, this.distancePx / this.levelLengthPx), 1);
 
     // Music builds with the run: sparse start, hat joins at 33%, full at 66%.
