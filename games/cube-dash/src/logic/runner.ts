@@ -103,8 +103,13 @@ export function levelGapScale(level: number): number {
   return Math.max(0.75, 1.2 - 0.06 * (level - 1));
 }
 
-/** Accent color per WORLD (5 levels each): teal, green, orange, cycling. */
-export const LEVEL_COLORS: readonly number[] = [0x4dd0e1, 0x66bb6a, 0xff7043];
+/**
+ * Accent color per WORLD (5 levels each), cycling: teal, green, orange,
+ * ice blue, lime, amber, indigo, magenta — one per world theme.
+ */
+export const LEVEL_COLORS: readonly number[] = [
+  0x4dd0e1, 0x66bb6a, 0xff7043, 0x90caf9, 0xc0ca33, 0xffca28, 0x7986cb, 0xea80fc,
+];
 
 export function levelColor(level: number): number {
   const world = Math.floor((Math.max(1, level) - 1) / LEVELS_PER_WORLD);

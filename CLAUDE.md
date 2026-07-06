@@ -81,8 +81,13 @@ games/cube-dash    Game #5, browser-playable. Geometry-Dash-style auto-runner
                    of each world (foreground speed streaks were tried and
                    removed per user). WORLDS (src/worlds.ts, tested): every 5
                    levels share a theme — sky/haze/silhouette/ground palette +
-                   its own MusicPattern — Neon City (132bpm) / Crystal Caves
-                   (112bpm) / Magma Core (145bpm), cycling; textures generated
+                   its own MusicPattern — 8 worlds, cycling after level 40:
+                   Neon City (132bpm) / Crystal Caves (112) / Magma Core (138)
+                   / Frost Ridge (118, peaks) / Toxic Swamp (126, mushrooms) /
+                   Gilded Dunes (124, ruins) / Deep Abyss (96, tendrils) /
+                   Aurora Summit (150, spires); each world has a unique
+                   silhouette style (uniqueness tested) and its own
+                   LEVEL_COLORS accent (8 entries); textures generated
                    per world (sil-<id>, ground-<id>); music.ts caches one
                    MusicPlayer per world (musicForLevel/stopAllMusic). HUD
                    run timer next to the % (elapsed active-play time, shown

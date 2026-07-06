@@ -291,6 +291,67 @@ export class GameScene extends Phaser.Scene {
           g.fillStyle(this.world.silLight, 0.8);
           g.fillTriangle(x + w / 2, 320 - h, x + w / 2 + 8, 320 - h + 40, x + w / 2 - 8, 320 - h + 40);
         }
+      } else if (this.world.silhouette === "peaks") {
+        const peaks: Array<[number, number, number]> = [
+          [0, 130, 230], [90, 150, 300], [210, 120, 200], [280, 140, 280], [370, 90, 170],
+        ];
+        for (const [x, w, h] of peaks) {
+          g.fillStyle(this.world.silDark, 1);
+          g.fillTriangle(x, 320, x + w * 0.5, 320 - h, x + w, 320);
+          // Snow cap hugging the summit.
+          g.fillStyle(this.world.silLight, 0.9);
+          g.fillTriangle(x + w * 0.5, 320 - h, x + w * 0.62, 320 - h * 0.82, x + w * 0.38, 320 - h * 0.82);
+        }
+      } else if (this.world.silhouette === "mushrooms") {
+        const shrooms: Array<[number, number, number]> = [
+          [10, 90, 180], [110, 130, 260], [230, 80, 150], [290, 120, 230],
+        ];
+        for (const [x, capW, h] of shrooms) {
+          const cx = x + capW / 2;
+          g.fillStyle(this.world.silDark, 1);
+          g.fillRect(cx - capW * 0.175, 320 - h, capW * 0.35, h); // stalk
+          g.fillEllipse(cx, 320 - h, capW, capW * 0.55); // cap
+          g.fillStyle(this.world.silLight, 0.8);
+          g.fillEllipse(cx, 320 - h - capW * 0.08, capW * 0.6, capW * 0.2);
+        }
+      } else if (this.world.silhouette === "ruins") {
+        const ruins: Array<[number, number]> = [
+          [0, 150], [140, 200], [320, 130],
+        ];
+        const tierH = 46;
+        for (const [x, baseW] of ruins) {
+          const tiers = Math.round(baseW / 44);
+          for (let t = 0; t < tiers; t++) {
+            const w = baseW * (1 - t * 0.18);
+            const cx = x + baseW / 2;
+            g.fillStyle(this.world.silDark, 1);
+            g.fillRect(cx - w / 2, 320 - tierH * (t + 1), w, tierH);
+            g.fillStyle(this.world.silLight, 0.7);
+            g.fillRect(cx - w / 2, 320 - tierH * (t + 1), w, 4);
+          }
+        }
+      } else if (this.world.silhouette === "tendrils") {
+        const tendrils: Array<[number, number, number, number]> = [
+          [10, 34, 240, 40], [80, 26, 300, -30], [150, 40, 200, 25], [230, 30, 310, -45],
+          [300, 36, 250, 35], [365, 24, 180, -20],
+        ];
+        for (const [x, w, h, lean] of tendrils) {
+          g.fillStyle(this.world.silDark, 1);
+          g.fillTriangle(x, 320, x + w / 2 + lean, 320 - h, x + w, 320);
+          g.fillStyle(this.world.silLight, 0.5);
+          g.fillTriangle(x + w * 0.3, 320, x + w / 2 + lean, 320 - h * 0.9, x + w * 0.55, 320);
+        }
+      } else if (this.world.silhouette === "spires") {
+        const spires: Array<[number, number, number]> = [
+          [10, 44, 210], [80, 60, 250], [170, 40, 170], [230, 70, 240], [330, 50, 220],
+        ];
+        for (const [x, w, h] of spires) {
+          g.fillStyle(this.world.silDark, 1);
+          g.fillRect(x, 320 - h, w, h);
+          g.fillTriangle(x, 320 - h, x + w / 2, 320 - h - w, x + w, 320 - h); // pointed tip
+          g.fillStyle(this.world.silLight, 0.8);
+          g.fillRect(x + w / 2 - 2, 320 - h, 4, h); // lit spine
+        }
       } else {
         const rocks: Array<[number, number, number]> = [
           [0, 160, 140], [100, 190, 210], [240, 170, 160], [320, 160, 120],

@@ -271,20 +271,22 @@ describe("level system", () => {
   });
 
   it("every level stays clearable: scaled gap still fits a reaction + jump", () => {
-    for (let level = 1; level <= 25; level++) {
+    for (let level = 1; level <= 40; level++) {
       const speed = levelSpeed(level);
       const gap = minGapPx(speed) * levelGapScale(level);
       expect(gap).toBeGreaterThan(jumpDistancePx(speed) + 0.2 * speed);
     }
   });
 
-  it("shares one accent color per world: teal, green, orange, cycling", () => {
+  it("shares one accent color per world, one per theme, cycling", () => {
+    expect(LEVEL_COLORS).toHaveLength(8); // one per world theme
     expect(levelColor(1)).toBe(LEVEL_COLORS[0]); // teal
     expect(levelColor(5)).toBe(LEVEL_COLORS[0]);
     expect(levelColor(6)).toBe(LEVEL_COLORS[1]); // green
-    expect(levelColor(10)).toBe(LEVEL_COLORS[1]);
     expect(levelColor(11)).toBe(LEVEL_COLORS[2]); // orange
-    expect(levelColor(16)).toBe(LEVEL_COLORS[0]); // wraps with the worlds
+    expect(levelColor(16)).toBe(LEVEL_COLORS[3]); // ice blue
+    expect(levelColor(36)).toBe(LEVEL_COLORS[7]); // magenta
+    expect(levelColor(41)).toBe(LEVEL_COLORS[0]); // wraps with the worlds
   });
 });
 
