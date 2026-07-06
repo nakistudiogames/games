@@ -28,9 +28,21 @@ export interface Runner {
  * One new kind unlocks per world (see KIND_UNLOCK_LEVEL):
  * spike/block from world 1, saw (ground buzzsaw, circular hitbox) world 2,
  * pit (lava trench, lethal only at ground level) world 3, swing (spike ball
- * bobbing up/down as it scrolls) world 4, laser (thin tall pylon beam) world 5.
+ * bobbing up/down as it scrolls) world 4, laser (thin tall pylon beam) world 5,
+ * geyser (vent whose flame column erupts on a fixed cycle) world 6, tentacle
+ * (thin tall stalk swaying sideways) world 7, arc (wide low lightning span —
+ * one full-commitment jump) world 8.
  */
-export type ObstacleKind = "spike" | "block" | "saw" | "pit" | "swing" | "laser";
+export type ObstacleKind =
+  | "spike"
+  | "block"
+  | "saw"
+  | "pit"
+  | "swing"
+  | "laser"
+  | "geyser"
+  | "tentacle"
+  | "arc";
 
 export interface Obstacle {
   /** Left edge in world pixels (scrolls toward the player). */
@@ -57,6 +69,28 @@ export const SWING_FREQ = (2 * Math.PI) / 500;
 /** Current bottom-edge height of a swing mine above the ground. */
 export function swingElev(o: Obstacle): number {
   return SWING_MID + SWING_AMP * Math.sin(o.x * SWING_FREQ + (o.phase ?? 0));
+}
+
+// Geysers erupt as a pure function of x (same trick as swing mines), so the
+// cycle is part of the level's fixed, memorizable layout. Roughly half-duty:
+// run through during the lull, or jump the eruption — the column stays short
+// enough that jumping over it always works (see test).
+export const GEYSER_FREQ = (2 * Math.PI) / 700;
+
+/** True while the geyser's column is erupting (lethal). */
+export function geyserActive(o: Obstacle): boolean {
+  return Math.sin(o.x * GEYSER_FREQ + (o.phase ?? 0)) > 0;
+}
+
+// Tentacles sway sideways as a pure function of x; the hitbox follows the
+// sway. Amplitude is bounded so the worst-case footprint (w + 2*AMP) still
+// fits inside one jump's airtime above the tip (see test).
+export const TENTACLE_AMP = 24;
+export const TENTACLE_FREQ = (2 * Math.PI) / 420;
+
+/** Current sideways offset of a tentacle's stalk from its anchor x. */
+export function tentacleSway(o: Obstacle): number {
+  return TENTACLE_AMP * Math.sin(o.x * TENTACLE_FREQ + (o.phase ?? 0));
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +150,14 @@ export function levelColor(level: number): number {
   return LEVEL_COLORS[world % LEVEL_COLORS.length]!;
 }
 
-/** Level at which each obstacle kind first appears: +1 kind per world. */
+/**
+ * Level at which each obstacle kind first appears: +1 kind per world.
+ *
+ * MANDATORY RULE: every world must introduce an obstacle kind no earlier
+ * world had — when adding a world to WORLDS, add a kind here that unlocks at
+ * that world's first level, plus an intro pattern with that minLevel.
+ * Enforced by tests (worlds.test.ts / runner.test.ts).
+ */
 export const KIND_UNLOCK_LEVEL: Record<ObstacleKind, number> = {
   spike: 1,
   block: 1,
@@ -124,6 +165,9 @@ export const KIND_UNLOCK_LEVEL: Record<ObstacleKind, number> = {
   pit: 1 + LEVELS_PER_WORLD * 2, // world 3
   swing: 1 + LEVELS_PER_WORLD * 3, // world 4
   laser: 1 + LEVELS_PER_WORLD * 4, // world 5
+  geyser: 1 + LEVELS_PER_WORLD * 5, // world 6
+  tentacle: 1 + LEVELS_PER_WORLD * 6, // world 7
+  arc: 1 + LEVELS_PER_WORLD * 7, // world 8
 };
 
 export function obstacleKindsForLevel(level: number): ObstacleKind[] {
@@ -202,6 +246,8 @@ export function stepRunner(r: Runner, dtSec: number, support: number): void {
  * Floating obstacles only kill inside their vertical band, so the player can
  * run underneath them. Saws and swing mines are round (circle hitbox), pits
  * are lethal only at ground level (jump across), lasers on any beam overlap.
+ * Geysers kill only while erupting, tentacles kill where the sway puts them,
+ * arcs kill anywhere inside their span below the beam.
  */
 export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boolean {
   const pl = PLAYER_X;
@@ -211,6 +257,31 @@ export function checkDeath(bottomY: number, obstacles: readonly Obstacle[]): boo
     if (o.kind === "pit") {
       const inset = 22;
       if (bottomY >= GROUND_Y - 2 && pr > o.x + inset && pl < o.x + o.w - inset) return true;
+      continue;
+    }
+    if (o.kind === "geyser") {
+      // The vent itself is harmless — only the erupting column kills.
+      if (!geyserActive(o)) continue;
+      const inset = 6;
+      if (pr > o.x + inset && pl < o.x + o.w - inset && bottomY > GROUND_Y - o.h + 6) {
+        return true;
+      }
+      continue;
+    }
+    if (o.kind === "tentacle") {
+      // The hitbox follows the sway, not the anchor.
+      const sx = o.x + tentacleSway(o);
+      const inset = 8;
+      if (pr > sx + inset && pl < sx + o.w - inset && bottomY > GROUND_Y - o.h + 6) {
+        return true;
+      }
+      continue;
+    }
+    if (o.kind === "arc") {
+      const inset = 10;
+      if (pr > o.x + inset && pl < o.x + o.w - inset && bottomY > GROUND_Y - o.h + 8) {
+        return true;
+      }
       continue;
     }
     if (o.kind === "saw" || o.kind === "swing") {
@@ -422,6 +493,66 @@ export const PATTERNS: readonly Pattern[] = [
     width: 444,
     minSpeed: 0,
     minLevel: 23,
+  },
+  {
+    // Flame geyser: the vent is harmless, the column erupts on a fixed
+    // cycle — run through the lull or jump the eruption.
+    id: "geyser1",
+    obstacles: [{ dx: 0, w: 60, h: 110, kind: "geyser" }],
+    width: 60,
+    minSpeed: 0,
+    minLevel: 26, // world 6
+  },
+  {
+    // Geyser guarding a trench: clear the eruption, then commit to the jump.
+    id: "geyserPit",
+    obstacles: [
+      { dx: 0, w: 60, h: 110, kind: "geyser" },
+      { dx: 390, w: 150, h: 24, kind: "pit" },
+    ],
+    width: 540,
+    minSpeed: 0,
+    minLevel: 28,
+  },
+  {
+    // Abyssal tentacle: thin and tall like a pylon, but it sways — jump
+    // where it WILL be, not where it is.
+    id: "tentacle1",
+    obstacles: [{ dx: 0, w: 30, h: 120, kind: "tentacle" }],
+    width: 78, // sway footprint: w + 2 * TENTACLE_AMP
+    minSpeed: 0,
+    minLevel: 31, // world 7
+  },
+  {
+    // Tentacle, then a buzzsaw waiting on the landing.
+    id: "tentacleSaw",
+    obstacles: [
+      { dx: 0, w: 30, h: 120, kind: "tentacle" },
+      { dx: 450, w: 90, h: 90, kind: "saw" },
+    ],
+    width: 540,
+    minSpeed: 0,
+    minLevel: 33,
+  },
+  {
+    // Tesla arc: a wide, low lightning span with nothing to land on inside
+    // it — one full-commitment jump clears the whole thing.
+    id: "arc1",
+    obstacles: [{ dx: 0, w: 200, h: 50, kind: "arc" }],
+    width: 200,
+    minSpeed: 0,
+    minLevel: 36, // world 8
+  },
+  {
+    // Arc into a bobbing mine: land the long jump, then read the bob.
+    id: "arcMine",
+    obstacles: [
+      { dx: 0, w: 200, h: 50, kind: "arc" },
+      { dx: 500, w: 54, h: 54, kind: "swing" },
+    ],
+    width: 554,
+    minSpeed: 0,
+    minLevel: 38,
   },
 ];
 

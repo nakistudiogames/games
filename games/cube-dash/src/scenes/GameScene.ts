@@ -9,6 +9,7 @@ import {
   POWER_UPS,
   checkDeath,
   collectsPowerUp,
+  geyserActive,
   jump,
   levelColor,
   levelGapScale,
@@ -22,9 +23,10 @@ import {
   stepRunner,
   supportAt,
   swingElev,
+  tentacleSway,
   tryJump,
 } from "../logic/runner";
-import type { Obstacle, PowerUp, Runner } from "../logic/runner";
+import type { Obstacle, ObstacleKind, PowerUp, Runner } from "../logic/runner";
 import { adsReady } from "../ads";
 import { characterById } from "../characters";
 import { attachAura, buildCharacterParts } from "../characterView";
@@ -632,8 +634,13 @@ export class GameScene extends Phaser.Scene {
     for (const { obs, view } of this.obstacles) {
       obs.x -= speed * dt;
       view.x = obs.x;
-      // Swing mines bob as a function of x — keep the view on the hitbox.
+      // Swing mines bob and tentacles sway as functions of x — keep the
+      // views on their hitboxes; geyser columns show exactly when lethal.
       if (obs.kind === "swing") view.y = GROUND_Y - obs.h - swingElev(obs);
+      else if (obs.kind === "tentacle") view.x = obs.x + tentacleSway(obs);
+      else if (obs.kind === "geyser") {
+        (view.getData("column") as Phaser.GameObjects.Container).setVisible(geyserActive(obs));
+      }
     }
     while (this.obstacles.length > 0 && this.obstacles[0]!.obs.x + this.obstacles[0]!.obs.w < -40) {
       this.obstacles.shift()!.view.destroy();
@@ -806,8 +813,11 @@ export class GameScene extends Phaser.Scene {
         h: spec.h,
         elev: spec.elev ?? 0,
         kind: spec.kind,
-        // Seeded rng: the bob phase is part of the level's fixed layout.
-        phase: spec.kind === "swing" ? this.rng.next() * Math.PI * 2 : 0,
+        // Seeded rng: bob/eruption/sway phases are part of the fixed layout.
+        phase:
+          spec.kind === "swing" || spec.kind === "geyser" || spec.kind === "tentacle"
+            ? this.rng.next() * Math.PI * 2
+            : 0,
       };
       this.obstacles.push({ obs, view: this.buildObstacleView(obs) });
     }
@@ -823,9 +833,10 @@ export class GameScene extends Phaser.Scene {
     const floating = obs.elev > 0;
 
     // Shadow falls on the ground below — smaller/fainter for floating
-    // objects. Pits are holes, and swing mines/lasers move or glow — no
-    // cast shadow for those.
-    if (obs.kind !== "pit" && obs.kind !== "swing" && obs.kind !== "laser") {
+    // objects. Pits/geysers are holes and swing mines/lasers/tentacles/arcs
+    // move or glow — no cast shadow for those.
+    const noShadow: readonly ObstacleKind[] = ["pit", "swing", "laser", "geyser", "tentacle", "arc"];
+    if (!noShadow.includes(obs.kind)) {
       const shadow = this.add
         .image(w / 2 + 8, h + obs.elev + 7, "shadowtex")
         .setScale(((w + 36) / 96) * (floating ? 0.7 : 1), floating ? 0.55 : 0.8)
@@ -847,6 +858,18 @@ export class GameScene extends Phaser.Scene {
     }
     if (obs.kind === "laser") {
       this.drawLaser(container, w, h);
+      return container;
+    }
+    if (obs.kind === "geyser") {
+      this.drawGeyser(container, w, h, obs);
+      return container;
+    }
+    if (obs.kind === "tentacle") {
+      this.drawTentacle(container, w, h);
+      return container;
+    }
+    if (obs.kind === "arc") {
+      this.drawArc(container, w, h);
       return container;
     }
 
@@ -1018,6 +1041,97 @@ export class GameScene extends Phaser.Scene {
     g.fillStyle(0xccff90, 1);
     g.fillCircle(w / 2, 2, 9);
     container.add(g);
+  }
+
+  /** Temple flame vent: the column erupts on a fixed cycle (world 6+). */
+  private drawGeyser(
+    container: Phaser.GameObjects.Container,
+    w: number,
+    h: number,
+    obs: Obstacle,
+  ): void {
+    // Erupting column — its visibility tracks the hitbox exactly (update()).
+    const column = this.add.container(0, 0);
+    const cg = this.add.graphics();
+    cg.fillStyle(0xff7043, 0.4);
+    cg.fillRect(-6, 0, w + 12, h);
+    cg.fillStyle(0xffca28, 0.95);
+    cg.fillRect(6, 0, w - 12, h);
+    cg.fillStyle(0xfff3c4, 1);
+    cg.fillRect(w / 2 - 5, 0, 10, h);
+    column.add(cg);
+    column.add(this.add.circle(w / 2, 2, 12, 0xfff3c4, 0.9));
+    container.add(column);
+    container.setData("column", column);
+    column.setVisible(geyserActive(obs));
+    // Flame flicker — alpha only, never below fully readable.
+    this.tweens.add({ targets: cg, alpha: 0.8, duration: 90, yoyo: true, repeat: -1 });
+    // Carved stone rim: always visible, always harmless — this is the tell.
+    const g = this.add.graphics();
+    g.fillStyle(0x33200a, 1);
+    g.fillRect(-10, h - 10, w + 20, 10);
+    g.fillStyle(0x5c3d14, 1);
+    g.fillRect(-10, h - 10, w + 20, 4);
+    g.fillStyle(0xffca28, 0.9);
+    g.fillRect(4, h - 6, w - 8, 3); // ember glow in the slot
+    container.add(g);
+  }
+
+  /** Swaying abyssal stalk — the view follows the hitbox sway (world 7+). */
+  private drawTentacle(container: Phaser.GameObjects.Container, w: number, h: number): void {
+    const g = this.add.graphics();
+    // Tapered stalk: wide flared root, narrow tip.
+    g.fillStyle(0x18304e, 1);
+    g.fillTriangle(-8, h, w + 8, h, w / 2, 0);
+    g.fillStyle(0x2a4a70, 1);
+    g.fillTriangle(0, h, w * 0.7, h, w / 2, 8);
+    // Sucker dots up the lit side.
+    g.fillStyle(0x90caf9, 0.7);
+    for (let i = 1; i <= 4; i++) g.fillCircle(w / 2 - 2, h - i * (h / 5), 3.5);
+    container.add(g);
+    // Luminous tip — the lure that telegraphs the hazard.
+    const tip = this.add.circle(w / 2, 6, 7, 0x90caf9, 0.9);
+    container.add(tip);
+    this.tweens.add({
+      targets: tip,
+      alpha: 0.4,
+      duration: 600,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut",
+    });
+  }
+
+  /** Wide low tesla arc between twin pylons — always lethal (world 8+). */
+  private drawArc(container: Phaser.GameObjects.Container, w: number, h: number): void {
+    const pw = 16;
+    const g = this.add.graphics();
+    for (const px of [0, w - pw]) {
+      g.fillStyle(0x263238, 1);
+      g.fillRect(px, 0, pw, h);
+      g.fillStyle(0x455a64, 1);
+      g.fillRect(px, 0, pw, 4);
+      g.fillStyle(0xea80fc, 1);
+      g.fillCircle(px + pw / 2, 4, 6);
+    }
+    container.add(g);
+    // Jagged bolt with a white-hot core over a violet glow field. The
+    // crackle is alpha-only — the whole span is always lethal.
+    const bolt = this.add.graphics();
+    const midY = h * 0.45;
+    bolt.fillStyle(0xea80fc, 0.25);
+    bolt.fillRect(pw, 8, w - 2 * pw, h - 8);
+    const seg = (w - 2 * pw) / 6;
+    const pts = Array.from({ length: 7 }, (_, i) => ({
+      x: pw + i * seg,
+      y: midY + (i % 2 === 0 ? -8 : 8),
+    }));
+    bolt.lineStyle(7, 0xea80fc, 0.8);
+    bolt.strokePoints(pts, false);
+    bolt.lineStyle(3, 0xffffff, 1);
+    bolt.strokePoints(pts, false);
+    container.add(bolt);
+    this.tweens.add({ targets: bolt, alpha: 0.6, duration: 90, yoyo: true, repeat: -1 });
   }
 
   private bumpBestPct(pct: number): number {

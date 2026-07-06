@@ -68,7 +68,21 @@ games/cube-dash    Game #5, browser-playable. Geometry-Dash-style auto-runner
                    function of x via swingElev(o.x, o.phase) — phase drawn
                    from the level rng; every height clearable: ≤120 jumpable
                    over, ≥80 run-underable), laser L21 (thin 24x130 pylon
-                   beam, always lethal — the pulse is visual only). Patterns
+                   beam, always lethal — the pulse is visual only), geyser
+                   L26 (temple vent, flame column erupts ~half-duty as a pure
+                   function of x via geyserActive — lull walkable, eruption
+                   jumpable, tested), tentacle L31 (thin 30x120 swaying stalk,
+                   hitbox follows tentacleSway(x) ±24px, worst-case footprint
+                   jumpable, tested), arc L36 (200x50 tesla span between twin
+                   pylons, always lethal, crackle visual only — forces one
+                   full-commitment jump, single-jump clearability tested).
+                   MANDATORY RULE: every new world must introduce an obstacle
+                   kind no earlier world had — new WORLDS entry ⇒ new
+                   ObstacleKind unlocking at that world's first level in
+                   KIND_UNLOCK_LEVEL + an intro pattern at that minLevel
+                   (enforced by tests in worlds.test.ts + runner.test.ts,
+                   which fail on a world without a kind or a kind without a
+                   pattern). Patterns
                    gate on BOTH minSpeed and minLevel (pickPattern(rng,
                    speed, level)); world-1 layouts unchanged by the feature
                    since all new patterns are minLevel ≥ 6. Obstacles have `elev`
@@ -176,7 +190,7 @@ npm run dev:2048   # merge-2048 on Vite dev server
 npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
-npm test           # vitest (15 + 12 + 9 + 8 + 54 = 98 tests, all green)
+npm test           # vitest (15 + 12 + 9 + 8 + 65 = 109 tests, all green)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)
 ```

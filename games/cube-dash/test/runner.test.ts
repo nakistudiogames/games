@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   BASE_SPEED,
+  GEYSER_FREQ,
+  GRAVITY,
   GROUND_Y,
   JUMP_VELOCITY,
   KIND_UNLOCK_LEVEL,
@@ -13,8 +15,11 @@ import {
   SWING_AMP,
   SWING_FREQ,
   SWING_MID,
+  TENTACLE_AMP,
+  TENTACLE_FREQ,
   checkDeath,
   collectsPowerUp,
+  geyserActive,
   jump,
   jumpDistancePx,
   LEVEL_COLORS,
@@ -32,6 +37,7 @@ import {
   stepRunner,
   supportAt,
   swingElev,
+  tentacleSway,
   tryJump,
 } from "../src/logic/runner";
 import type { Obstacle, ObstacleKind, PowerUp, Runner } from "../src/logic/runner";
@@ -338,6 +344,24 @@ describe("world obstacle unlocks (+1 kind per world)", () => {
     expect(obstacleKindsForLevel(16)).toContain("swing");
     expect(obstacleKindsForLevel(21)).toHaveLength(6); // + laser
     expect(obstacleKindsForLevel(21)).toContain("laser");
+    expect(obstacleKindsForLevel(26)).toHaveLength(7); // + geyser
+    expect(obstacleKindsForLevel(26)).toContain("geyser");
+    expect(obstacleKindsForLevel(31)).toHaveLength(8); // + tentacle
+    expect(obstacleKindsForLevel(31)).toContain("tentacle");
+    expect(obstacleKindsForLevel(36)).toHaveLength(9); // + arc
+    expect(obstacleKindsForLevel(36)).toContain("arc");
+  });
+
+  it("MANDATORY: every unlockable kind gets an intro pattern at its unlock level", () => {
+    // Companion to the worlds-side rule: a kind that unlocks but never
+    // appears in a pattern would silently never spawn.
+    for (const [kind, lvl] of Object.entries(KIND_UNLOCK_LEVEL)) {
+      if (lvl === 1) continue; // world-1 kinds live in the base patterns
+      const hasIntro = PATTERNS.some(
+        (p) => (p.minLevel ?? 1) === lvl && p.obstacles.some((o) => o.kind === kind),
+      );
+      expect(hasIntro, `kind "${kind}" needs a pattern with minLevel ${lvl}`).toBe(true);
+    }
   });
 
   it("unlock levels land on the first level of each world", () => {
@@ -374,6 +398,11 @@ describe("world obstacle unlocks (+1 kind per world)", () => {
     const world5 = kindsAt(25);
     for (const k of ["spike", "block", "saw", "pit", "swing", "laser"] as const) {
       expect(world5.has(k)).toBe(true);
+    }
+    expect(world5.has("geyser")).toBe(false);
+    const world8 = kindsAt(40);
+    for (const k of Object.keys(KIND_UNLOCK_LEVEL) as ObstacleKind[]) {
+      expect(world8.has(k)).toBe(true);
     }
   });
 });
@@ -471,6 +500,99 @@ describe("laser pylon (world 5): thin, tall, always on", () => {
     for (const p of PATTERNS) {
       for (const o of p.obstacles) {
         if (o.kind === "laser") expect(o.h).toBeLessThanOrEqual(150);
+      }
+    }
+  });
+});
+
+/**
+ * Px traveled at `speed` while a full jump stays at or above `minHeight` —
+ * the horizontal room available to clear a hazard of that height.
+ */
+const airWindowPx = (speed: number, minHeight: number): number => {
+  const disc = JUMP_VELOCITY ** 2 - 2 * GRAVITY * minHeight;
+  return disc <= 0 ? 0 : (speed * 2 * Math.sqrt(disc)) / GRAVITY;
+};
+
+describe("geyser (world 6): erupts as a pure function of x", () => {
+  const geyser = (x: number, phase: number): Obstacle => ({
+    x, w: 60, h: 110, elev: 0, kind: "geyser", phase,
+  });
+  /** Phase that puts the cycle at full eruption (+) or full lull (-) at x. */
+  const phaseFor = (x: number, sign: 1 | -1): number =>
+    (sign * Math.PI) / 2 - x * GEYSER_FREQ;
+
+  it("is deterministic: same x and phase, same state", () => {
+    expect(geyserActive(geyser(423, 2))).toBe(geyserActive(geyser(423, 2)));
+  });
+
+  it("dormant vent is harmless, eruption kills at ground level", () => {
+    expect(checkDeath(GROUND_Y, [geyser(PLAYER_X, phaseFor(PLAYER_X, -1))])).toBe(false);
+    expect(checkDeath(GROUND_Y, [geyser(PLAYER_X, phaseFor(PLAYER_X, 1))])).toBe(true);
+  });
+
+  it("a full eruption clears with a jump over the column", () => {
+    const erupting = geyser(PLAYER_X, phaseFor(PLAYER_X, 1));
+    expect(checkDeath(GROUND_Y - 120, [erupting])).toBe(false);
+    // Airtime above the column tip out-spans the kill zone with margin,
+    // so the jump-over route works no matter the cycle.
+    const speed = levelSpeed(KIND_UNLOCK_LEVEL.geyser); // 600 by world 6
+    const killSpan = 60 - 2 * 6 + PLAYER_SIZE; // width minus insets + player
+    expect(airWindowPx(speed, 110 - 6)).toBeGreaterThan(killSpan + 30);
+  });
+});
+
+describe("tentacle (world 7): sways sideways as a pure function of x", () => {
+  const tentacle = (x: number, phase: number): Obstacle => ({
+    x, w: 30, h: 120, elev: 0, kind: "tentacle", phase,
+  });
+  /** Phase for full sway toward (+AMP) or away (-AMP) at x. */
+  const phaseFor = (x: number, sign: 1 | -1): number =>
+    (sign * Math.PI) / 2 - x * TENTACLE_FREQ;
+
+  it("sway stays inside ±TENTACLE_AMP and is deterministic", () => {
+    for (let x = 0; x < 1000; x += 41) {
+      const sway = tentacleSway(tentacle(x, 0.7));
+      expect(Math.abs(sway)).toBeLessThanOrEqual(TENTACLE_AMP);
+    }
+    expect(tentacleSway(tentacle(423, 2))).toBe(tentacleSway(tentacle(423, 2)));
+  });
+
+  it("kills where the sway puts it, not where it is anchored", () => {
+    // Anchored just past the player: lethal only when swaying toward them.
+    const x = PLAYER_X + PLAYER_SIZE + 10;
+    expect(checkDeath(GROUND_Y, [tentacle(x, phaseFor(x, -1))])).toBe(true);
+    expect(checkDeath(GROUND_Y, [tentacle(x, phaseFor(x, 1))])).toBe(false);
+  });
+
+  it("worst-case sway footprint still fits inside one jump", () => {
+    const speed = levelSpeed(KIND_UNLOCK_LEVEL.tentacle); // 600 by world 7
+    const killSpan = 30 + 2 * TENTACLE_AMP - 2 * 8 + PLAYER_SIZE;
+    expect(airWindowPx(speed, 120 - 6)).toBeGreaterThan(killSpan + 30);
+  });
+});
+
+describe("arc (world 8): wide low span, one full-commitment jump", () => {
+  const arc = (x: number): Obstacle => ({ x, w: 200, h: 50, elev: 0, kind: "arc" });
+
+  it("kills anywhere inside the span at beam height, cleared above it", () => {
+    expect(checkDeath(GROUND_Y, [arc(PLAYER_X)])).toBe(true);
+    expect(checkDeath(GROUND_Y, [arc(PLAYER_X - 100)])).toBe(true); // mid-span
+    expect(checkDeath(GROUND_Y - 70, [arc(PLAYER_X)])).toBe(false);
+  });
+
+  it("forgives the pylon inset at both edges", () => {
+    expect(checkDeath(GROUND_Y, [arc(PLAYER_X + PLAYER_SIZE - 10)])).toBe(false);
+    expect(checkDeath(GROUND_Y, [arc(PLAYER_X - 200 + 10)])).toBe(false);
+  });
+
+  it("every arc in the pattern set is clearable in a single jump", () => {
+    const speed = levelSpeed(KIND_UNLOCK_LEVEL.arc); // 600 by world 8
+    for (const p of PATTERNS) {
+      for (const o of p.obstacles) {
+        if (o.kind !== "arc") continue;
+        const killSpan = o.w - 2 * 10 + PLAYER_SIZE;
+        expect(airWindowPx(speed, o.h - 8)).toBeGreaterThan(killSpan + 30);
       }
     }
   });

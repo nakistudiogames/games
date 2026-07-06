@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { LEVELS_PER_WORLD, WORLDS, worldForLevel, worldNumberForLevel } from "../src/worlds";
+import { KIND_UNLOCK_LEVEL } from "../src/logic/runner";
 
 describe("worlds", () => {
   it("groups levels into worlds of five", () => {
@@ -36,6 +37,20 @@ describe("worlds", () => {
       expect(w.music.kick).toHaveLength(16);
       expect(w.music.hat).toHaveLength(16);
       expect(w.music.bpm).toBeGreaterThan(60);
+    }
+  });
+
+  it("MANDATORY: every world introduces an obstacle kind no earlier world had", () => {
+    // Rule for adding worlds: each new WORLDS entry must come with a new
+    // ObstacleKind unlocking at that world's first level (KIND_UNLOCK_LEVEL)
+    // and an intro pattern gated to it (see runner.test.ts).
+    const introWorlds = new Set(
+      Object.values(KIND_UNLOCK_LEVEL).map(
+        (lvl) => Math.floor((lvl - 1) / LEVELS_PER_WORLD) + 1,
+      ),
+    );
+    for (let w = 1; w <= WORLDS.length; w++) {
+      expect(introWorlds.has(w)).toBe(true);
     }
   });
 });
