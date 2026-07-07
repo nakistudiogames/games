@@ -698,19 +698,22 @@ export class GameScene extends Phaser.Scene {
     if (this.phase !== "playing") return;
     this.elapsedMs += deltaMs;
     const dt = Math.min(deltaMs, MAX_DT_MS) / 1000;
+    const baseSpeed = levelSpeed(this.levelNum);
     const dashing = this.distancePx < this.dashUntilPx;
-    const speed =
-      levelSpeed(this.levelNum) * (this.slowmoMs > 0 ? SLOWMO_MUL : 1) * (dashing ? DASH_MUL : 1);
-    this.distancePx += speed * dt;
+    const speed = baseSpeed * (dashing ? DASH_MUL : 1);
+    // Slow-mo scales the whole simulation clock (scroll AND physics), so
+    // jump trajectories in px are unchanged and clearability is preserved.
+    const simDt = dt * (this.slowmoMs > 0 ? SLOWMO_MUL : 1);
+    this.distancePx += speed * simDt;
 
     // Parallax: far stars drift, skyline rolls, ground grid matches the track.
-    this.bgFar.tilePositionX += speed * dt * 0.12;
-    if (this.bgMid2) this.bgMid2.tilePositionX += speed * dt * 0.22;
-    this.bgMid.tilePositionX += speed * dt * 0.4;
-    this.groundTile.tilePositionX += speed * dt;
+    this.bgFar.tilePositionX += speed * simDt * 0.12;
+    if (this.bgMid2) this.bgMid2.tilePositionX += speed * simDt * 0.22;
+    this.bgMid.tilePositionX += speed * simDt * 0.4;
+    this.groundTile.tilePositionX += speed * simDt;
 
     for (const { obs, view } of this.obstacles) {
-      obs.x -= speed * dt;
+      obs.x -= speed * simDt;
       view.x = obs.x;
       // Moving/timed kinds: keep every view on its hitbox — position follows
       // the motion function, visibility/alpha tracks the lethal state.
@@ -755,22 +758,25 @@ export class GameScene extends Phaser.Scene {
       this.obstacles.shift()!.view.destroy();
     }
     if (this.attemptText) {
-      this.attemptText.x -= speed * dt;
+      this.attemptText.x -= speed * simDt;
       if (this.attemptText.x < -240) {
         this.attemptText.destroy();
         this.attemptText = null;
       }
     }
 
-    this.maybeSpawnPattern(speed);
-    this.updatePowerUps(speed, dt, deltaMs);
+    // Spawning always uses the BASE speed: pattern choice and gap sizing must
+    // be a pure function of track distance, or a collected slow-mo/dash would
+    // change the layout and break the identical-every-attempt guarantee.
+    this.maybeSpawnPattern(baseSpeed);
+    this.updatePowerUps(speed, simDt, deltaMs);
     this.updateFinish();
     this.updateZones();
     this.updateBoosts();
 
     const obsList = this.obstacles.map((o) => o.obs);
     const wasAirborne = !this.runner.grounded;
-    stepRunner(this.runner, dt, supportAt(this.runner.y, obsList));
+    stepRunner(this.runner, simDt, supportAt(this.runner.y, obsList));
     if (this.runner.grounded && wasAirborne) {
       this.playerView.rotation = Math.round(this.playerView.rotation / (Math.PI / 2)) * (Math.PI / 2);
       this.dust.explode(6, this.playerView.x, this.runner.y - 4);
@@ -790,7 +796,7 @@ export class GameScene extends Phaser.Scene {
       }
     }
     this.jumpBufferMs = Math.max(0, this.jumpBufferMs - deltaMs);
-    if (!this.runner.grounded) this.playerView.rotation += 6 * dt;
+    if (!this.runner.grounded) this.playerView.rotation += 6 * simDt;
     this.playerView.y = this.runner.y - PLAYER_SIZE / 2;
 
     // Ground shadow shrinks and fades as the cube gains height.
@@ -898,18 +904,14 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** True when something hangs over the track just ahead — pads hold fire. */
-  private overheadAhead(): boolean {
+  /**
+   * True when ANY obstacle sits in the pad's flight corridor. A pad launch
+   * is a ~480px committed flight the player can't steer, so pads only fire
+   * on open track — never into a hazard (bot-test-proven fairness rule).
+   */
+  private padPathBlocked(): boolean {
     return this.obstacles.some(
-      ({ obs }) =>
-        obs.x > PLAYER_X - 100 &&
-        obs.x < PLAYER_X + 700 &&
-        (obs.elev > 0 ||
-          obs.kind === "gate" ||
-          obs.kind === "swing" ||
-          obs.kind === "crusher" ||
-          obs.kind === "drone" ||
-          obs.kind === "urchin"),
+      ({ obs }) => obs.x + obs.w > PLAYER_X - 100 && obs.x < PLAYER_X + 700,
     );
   }
 
@@ -924,9 +926,9 @@ export class GameScene extends Phaser.Scene {
         this.dashUntilPx = bo.b.at + DASH_LENGTH_PX;
         sfx.clear(2);
         this.sparkle.explode(12, this.playerView.x, this.playerView.y);
-      } else if (this.runner.grounded && !this.overheadAhead()) {
-        // Launch! (Pads hold fire under overhead hazards — deterministic,
-        // since layouts and boost placements are both seeded.)
+      } else if (this.runner.grounded && !this.padPathBlocked()) {
+        // Launch! (Pads hold fire unless the corridor is clear —
+        // deterministic, since layouts and boost placements are seeded.)
         this.runner.vy = PAD_JUMP_VELOCITY;
         this.runner.grounded = false;
         this.runner.coyoteMs = 0;

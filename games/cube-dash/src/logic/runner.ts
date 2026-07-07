@@ -153,15 +153,22 @@ export function gearShift(o: Obstacle): number {
   return GEAR_SHIFT_AMP * Math.sin(o.x * GEAR_FREQ + (o.phase ?? 0));
 }
 
-// Gate: bottom bar up to 40, window 40..170 (fits the 60px player mid-jump),
-// top bar 170..300. One obstacle spec (h = GATE_TOP) describes both bars.
+// Gate: bottom bar up to 40, window 40..240, top bar 240..300. One obstacle
+// spec (h = GATE_TOP) describes both bars. The window must be TALL: crossing
+// the kill span takes ~72px of travel, and the jump arc only spends enough
+// time inside a window this size (the bot playthrough test proves it — the
+// original 170 ceiling made gates mathematically impassable).
 export const GATE_GAP_LO = 40;
-export const GATE_GAP_HI = 170;
+export const GATE_GAP_HI = 240;
 export const GATE_TOP = 300;
 
 // Crusher bobs in the swing band [10, 130]: same overlap invariant — low
-// enough to jump over, or high enough (≥80) to run under.
-export const CRUSHER_FREQ = (2 * Math.PI) / 560;
+// enough to jump over, or high enough (≥80) to run under. The bob must be
+// SLOW: the slab is 90px wide, so a crossing spans ~134px of scroll, and a
+// fast bob changes the elevation mid-crossing enough that neither escape
+// works at some phases (the bot playthrough test caught exactly that). At a
+// 2000px period the crossing is quasi-static and the bands always overlap.
+export const CRUSHER_FREQ = (2 * Math.PI) / 2000;
 /** Current bottom-edge height of a crusher slab above the ground. */
 export function crusherElev(o: Obstacle): number {
   return SWING_MID + SWING_AMP * Math.sin(o.x * CRUSHER_FREQ + (o.phase ?? 0));
@@ -1150,7 +1157,14 @@ export const POWERUP_UNLOCK_LEVEL: Record<PowerUpKind, number> = {
   slowmo: 16,
 };
 
-/** World-speed multiplier while Slow-Mo is active — only ever easier. */
+/**
+ * Simulation-clock multiplier while Slow-Mo is active: the WHOLE world
+ * (scroll and jump physics alike) runs at 85% — true bullet-time. Because
+ * both scale together, trajectories in px are unchanged, so every
+ * clearability guarantee survives. (Scaling only the scroll speed would
+ * shrink jump distances and make wide hazards like arcs impassable — the
+ * bot playthrough test caught exactly that.)
+ */
 export const SLOWMO_MUL = 0.85;
 
 export const POWERUP_SIZE = 56;

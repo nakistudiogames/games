@@ -27,4 +27,11 @@ export class Rng {
     if (items.length === 0) throw new Error("Rng.pick: empty array");
     return items[this.int(items.length)]!;
   }
+
+  /** Snapshot copy: the clone continues the sequence independently. */
+  clone(): Rng {
+    const copy = new Rng(0);
+    copy.state = this.state;
+    return copy;
+  }
 }

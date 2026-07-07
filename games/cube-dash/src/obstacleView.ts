@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { GATE_GAP_HI, GATE_GAP_LO } from "./logic/runner";
 import type { ObstacleKind } from "./logic/runner";
 
 /**
@@ -552,8 +553,8 @@ function drawGear(scene: Scene, container: Container, w: number): void {
 
 /** Energy gate (world 12+): two bars — thread the window between them. */
 function drawGate(scene: Scene, container: Container, w: number, h: number): void {
-  const winTop = h - 170; // window spans elevations 40..170
-  const winBottom = h - 40;
+  const winTop = h - GATE_GAP_HI; // window spans the passable elevations
+  const winBottom = h - GATE_GAP_LO;
   const g = scene.add.graphics();
   // Emitter nodes bracketing the window — steady, like the laser base.
   g.fillStyle(0x263238, 1);

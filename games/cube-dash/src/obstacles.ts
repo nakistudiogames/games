@@ -120,7 +120,7 @@ export const POWERUP_INFO: Record<PowerUpKind, ObstacleInfo> = {
 export const BOOST_INFO: Record<BoostKind, ObstacleInfo> = {
   pad: {
     name: "Launch Pad",
-    blurb: "Run over it to rocket into a jump half again higher than normal. It holds fire under hanging hazards.",
+    blurb: "Run over it to rocket into a jump half again higher than normal. It only fires when the track ahead is clear.",
   },
   strip: {
     name: "Dash Strip",

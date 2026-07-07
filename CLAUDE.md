@@ -213,6 +213,27 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    buildZoneGateView + ZONE_COLORS/BOOST_PREVIEW — extracted
                    from GameScene, which now consumes them too); locked rows
                    show "??? / reach world-or-level N" teasers.
+                   BOT PLAYTHROUGH TEST (test/levelSim.ts + bot.test.ts,
+                   2026-07-06): headless LevelSim replicates GameScene's
+                   update loop (fixed dt 1/120, same rng stream order:
+                   patterns then powerups; mirrors GameScene-private consts —
+                   keep in sync when touching spawn logic); a lookahead bot
+                   (probe H=100, findSafePlan depth-3 recursive with SAFE_H
+                   tail + REPLAN_MIN 35 base case, desperate bestEffortDelay
+                   when death ≤30 frames) plays ALL 100 levels each npm test
+                   and must finish with ZERO shield saves (~12s, timeout
+                   120s). It CAUGHT + forced these fixes: (1) spawning now
+                   uses BASE levelSpeed (maybeSpawnPattern(baseSpeed)) so
+                   slow-mo/dash can't change layouts; (2) slow-mo is now true
+                   bullet-time — scales simDt (scroll AND physics) so px
+                   trajectories are unchanged (scaling scroll only made arcs
+                   impassable); (3) GATE_GAP_HI 170→240 (old window was
+                   mathematically impassable: 72px crossing vs 41px of arc
+                   time); (4) pads fire only when the corridor is clear of
+                   ANY obstacle (padPathBlocked, was overhead-only — pads
+                   could launch into walls); (5) CRUSHER_FREQ 560→2000px
+                   period (fast bob shifted the band mid-crossing making
+                   some phases impassable). Rng gained clone() for this.
                    God mode: dev-only toggle button in the menu, rendered and
                    effective ONLY when location.host === "localhost:5173"
                    (godModeAvailable/godModeOn in MenuScene.ts) — unlocks all
@@ -287,7 +308,8 @@ npm run dev:2048   # merge-2048 on Vite dev server
 npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
-npm test           # vitest (15 + 12 + 9 + 8 + 120 = 164 tests, all green)
+npm test           # vitest (15 + 12 + 9 + 8 + 125 = 169 tests, all green;
+                   # cube-dash includes the ~12s bot playthrough suite)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)
 ```
