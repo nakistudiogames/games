@@ -1101,6 +1101,41 @@ export interface TrackBoost {
 
 /** Pad jumps launch 25% harder: apex ≈ 312px vs the normal ≈ 200px. */
 export const PAD_JUMP_VELOCITY = JUMP_VELOCITY * 1.25;
+/** Visual/trigger footprint width per boost kind (px on the track). */
+export const BOOST_FOOTPRINT: Record<BoostKind, number> = { pad: 90, strip: 200 };
+
+/** Post-landing no-input survival a pad launch must leave the player. */
+export const PAD_LANDING_TAIL_FRAMES = 35;
+
+/**
+ * True when firing the pad RIGHT NOW is fair: the whole flight is
+ * death-free, and after touchdown the player survives hands-off long
+ * enough (PAD_LANDING_TAIL_FRAMES ≈ a takeoff window) to react to
+ * whatever comes next. Simulated against the real obstacle list — the
+ * launch soars over almost everything (apex ≈ 312px), so unlike a
+ * clear-corridor test this lets pads fire between and OVER hazards.
+ * Slow-mo scales sim time uniformly, so px trajectories — and therefore
+ * this answer — are unaffected by it.
+ */
+export function padLaunchSafe(obstacles: readonly Obstacle[], speed: number): boolean {
+  const obs = obstacles.map((o) => ({ ...o }));
+  const r: Runner = {
+    y: GROUND_Y,
+    vy: PAD_JUMP_VELOCITY,
+    grounded: false,
+    airJumpUsed: true,
+    coyoteMs: 0,
+  };
+  const dt = 1 / 120;
+  let groundedFrames = 0;
+  for (let i = 0; i < 400; i++) {
+    for (const o of obs) o.x -= speed * dt;
+    stepRunner(r, dt, supportAt(r.y, obs));
+    if (checkDeath(r.y, obs)) return false;
+    if (r.grounded && ++groundedFrames >= PAD_LANDING_TAIL_FRAMES) return true;
+  }
+  return true;
+}
 export const DASH_MUL = 1.2;
 export const DASH_LENGTH_PX = 1600;
 export const PAD_MIN_LEVEL = 6;

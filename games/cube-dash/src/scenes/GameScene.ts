@@ -3,11 +3,13 @@ import { Rng, haptics, sfx } from "@mg/core";
 import type { MusicPlayer } from "@mg/core";
 import { floatBanner, textButton } from "@mg/ui";
 import {
+  BOOST_FOOTPRINT,
   DASH_LENGTH_PX,
   DASH_MUL,
   GROUND_Y,
   KINDS_WITH_PHASE,
   MIRROR_MIN_LEVEL,
+  JUMP_VELOCITY,
   PAD_JUMP_VELOCITY,
   SLOWMO_MUL,
   PLAYER_SIZE,
@@ -32,6 +34,7 @@ import {
   makePowerUp,
   minGapPx,
   nearMiss,
+  padLaunchSafe,
   phantomSolid,
   pickPattern,
   powerUpGapPx,
@@ -772,23 +775,28 @@ export class GameScene extends Phaser.Scene {
     this.updatePowerUps(speed, simDt, deltaMs);
     this.updateFinish();
     this.updateZones();
-    this.updateBoosts();
+    this.updateBoosts(speed);
 
     const obsList = this.obstacles.map((o) => o.obs);
     const wasAirborne = !this.runner.grounded;
+    const impactVy = this.runner.vy; // captured before landing zeroes it
     stepRunner(this.runner, simDt, supportAt(this.runner.y, obsList));
     if (this.runner.grounded && wasAirborne) {
       this.playerView.rotation = Math.round(this.playerView.rotation / (Math.PI / 2)) * (Math.PI / 2);
       this.dust.explode(6, this.playerView.x, this.runner.y - 4);
-      // Landing feel: squash the cube and kick the camera a hair.
+      // Landing feel: the cube squashes on every landing, but the camera
+      // only kicks on HARD impacts (pad-launch touchdowns) — a routine
+      // jump landing shaking the screen reads as the ground wobbling.
       this.punchScale(1.18, 0.82);
-      this.tweens.add({
-        targets: this.cameras.main,
-        scrollY: 4,
-        duration: 45,
-        yoyo: true,
-        ease: "Sine.easeOut",
-      });
+      if (impactVy > -JUMP_VELOCITY * 1.1) {
+        this.tweens.add({
+          targets: this.cameras.main,
+          scrollY: 4,
+          duration: 45,
+          yoyo: true,
+          ease: "Sine.easeOut",
+        });
+      }
       if (this.jumpBufferMs > 0) {
         jump(this.runner);
         sfx.place();
@@ -904,20 +912,27 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /**
-   * True when ANY obstacle sits in the pad's flight corridor. A pad launch
-   * is a ~480px committed flight the player can't steer, so pads only fire
-   * on open track — never into a hazard (bot-test-proven fairness rule).
-   */
-  private padPathBlocked(): boolean {
-    return this.obstacles.some(
-      ({ obs }) => obs.x + obs.w > PLAYER_X - 100 && obs.x < PLAYER_X + 700,
-    );
-  }
-
-  private updateBoosts(): void {
+  private updateBoosts(speed: number): void {
     for (const bo of this.boosts) {
-      const x = PLAYER_X + (bo.b.at - this.distancePx);
+      let x = PLAYER_X + (bo.b.at - this.distancePx);
+      // Seeded boost placements don't know the obstacle layout — slide any
+      // boost that would sit on/next to a hazard further down the track
+      // until it lands in a gap. Layouts are deterministic, so the settled
+      // spot is identical every run (mirrored in test/levelSim.ts).
+      if (!bo.used && x > -100 && x < WORLD_WIDTH + 300) {
+        const half = BOOST_FOOTPRINT[bo.b.kind] / 2 + 30;
+        while (this.obstacles.some(({ obs }) => obs.x < x + half && obs.x + obs.w > x - half)) {
+          bo.b.at += 40;
+          x += 40;
+          if (bo.b.at > this.levelLengthPx - CLEAR_RUNWAY_PX - 400) {
+            // No room left before the finish runway — retire this boost.
+            bo.used = true;
+            bo.b.at = this.levelLengthPx + 100_000;
+            x = PLAYER_X + (bo.b.at - this.distancePx);
+            break;
+          }
+        }
+      }
       bo.view.x = x;
       bo.view.setVisible(x > -300 && x < WORLD_WIDTH + 300);
       if (bo.used || this.distancePx < bo.b.at) continue;
@@ -926,9 +941,12 @@ export class GameScene extends Phaser.Scene {
         this.dashUntilPx = bo.b.at + DASH_LENGTH_PX;
         sfx.clear(2);
         this.sparkle.explode(12, this.playerView.x, this.playerView.y);
-      } else if (this.runner.grounded && !this.padPathBlocked()) {
-        // Launch! (Pads hold fire unless the corridor is clear —
-        // deterministic, since layouts and boost placements are seeded.)
+      } else if (
+        this.runner.grounded &&
+        padLaunchSafe(this.obstacles.map((o) => o.obs), speed)
+      ) {
+        // Launch! (Pads hold fire only when the simulated flight would end
+        // badly — deterministic, since layouts and placements are seeded.)
         this.runner.vy = PAD_JUMP_VELOCITY;
         this.runner.grounded = false;
         this.runner.coyoteMs = 0;

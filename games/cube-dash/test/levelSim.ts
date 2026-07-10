@@ -1,5 +1,6 @@
 import { Rng } from "@mg/core";
 import {
+  BOOST_FOOTPRINT,
   DASH_LENGTH_PX,
   DASH_MUL,
   GROUND_Y,
@@ -17,6 +18,7 @@ import {
   levelSpeed,
   makePowerUp,
   minGapPx,
+  padLaunchSafe,
   pickPattern,
   powerUpGapPx,
   stepRunner,
@@ -64,6 +66,12 @@ export class LevelSim {
   shieldSaves = 0;
   dead = false;
   finished = false;
+  /** Enable the boost-overlap probe (off by default so bot rollouts stay fast). */
+  probeBoostOverlap = false;
+  /** Worst boost-vs-obstacle footprint overlap seen on screen (test probe). */
+  worstBoostOverlap = 0;
+  /** Pads that actually fired — guards against firing rules going inert. */
+  padLaunches = 0;
 
   constructor(level: number) {
     this.level = level;
@@ -79,8 +87,10 @@ export class LevelSim {
       runner: { ...this.runner },
       obstacles: this.obstacles.map((o) => ({ ...o })),
       powerUps: this.powerUps.map((p) => ({ ...p })),
-      boosts: this.boosts.map((x) => ({ b: x.b, used: x.used })),
+      // Deep-copy b: rollouts nudge b.at, which must NOT leak to the parent.
+      boosts: this.boosts.map((x) => ({ b: { ...x.b }, used: x.used })),
       rng: this.rng.clone(),
+      probeBoostOverlap: false, // rollouts skip the probe — keep them fast
     });
     return c;
   }
@@ -103,7 +113,7 @@ export class LevelSim {
 
     this.maybeSpawnPattern();
     this.updatePowerUps(speed, simDt, deltaMs);
-    this.updateBoosts();
+    this.updateBoosts(speed);
 
     if (jump) tryJump(this.runner, this.doubleJumpMs > 0);
     stepRunner(this.runner, simDt, supportAt(this.runner.y, this.obstacles));
@@ -176,23 +186,41 @@ export class LevelSim {
     this.slowmoMs = Math.max(0, this.slowmoMs - deltaMs);
   }
 
-  /** Mirrors GameScene.padPathBlocked: pads only fire on open track. */
-  private padPathBlocked(): boolean {
-    return this.obstacles.some(
-      (o) => o.x + o.w > PLAYER_X - 100 && o.x < PLAYER_X + 700,
-    );
-  }
-
-  private updateBoosts(): void {
+  private updateBoosts(speed: number): void {
     for (const bo of this.boosts) {
+      // Slide boosts out from under hazards — mirrors GameScene.updateBoosts.
+      let x = PLAYER_X + (bo.b.at - this.distancePx);
+      if (!bo.used && x > -100 && x < WORLD_WIDTH + 300) {
+        const half = BOOST_FOOTPRINT[bo.b.kind] / 2 + 30;
+        while (this.obstacles.some((o) => o.x < x + half && o.x + o.w > x - half)) {
+          bo.b.at += 40;
+          x += 40;
+          if (bo.b.at > this.lengthPx - CLEAR_RUNWAY_PX - 400) {
+            bo.used = true;
+            bo.b.at = this.lengthPx + 100_000;
+            break;
+          }
+        }
+      }
+      // Probe: after settling, a visible boost must not overlap a hazard's
+      // body (a ±30px graze margin is fine, not the body).
+      if (this.probeBoostOverlap && !bo.used && x > -BOOST_FOOTPRINT[bo.b.kind] && x < WORLD_WIDTH) {
+        const bl = x - BOOST_FOOTPRINT[bo.b.kind] / 2;
+        const br = x + BOOST_FOOTPRINT[bo.b.kind] / 2;
+        for (const o of this.obstacles) {
+          const overlap = Math.min(br, o.x + o.w) - Math.max(bl, o.x);
+          if (overlap > this.worstBoostOverlap) this.worstBoostOverlap = overlap;
+        }
+      }
       if (bo.used || this.distancePx < bo.b.at) continue;
       bo.used = true;
       if (bo.b.kind === "strip") {
         this.dashUntilPx = bo.b.at + DASH_LENGTH_PX;
-      } else if (this.runner.grounded && !this.padPathBlocked()) {
+      } else if (this.runner.grounded && padLaunchSafe(this.obstacles, speed)) {
         this.runner.vy = PAD_JUMP_VELOCITY;
         this.runner.grounded = false;
         this.runner.coyoteMs = 0;
+        this.padLaunches++;
       }
     }
   }
@@ -211,6 +239,10 @@ export interface BotResult {
   nearby: string;
   shieldSaves: number;
   stalled: boolean;
+  /** Worst boost-vs-hazard body overlap seen on screen (≤0 = clean gap). */
+  worstBoostOverlap: number;
+  /** Pads that actually fired during the run. */
+  padLaunches: number;
 }
 
 /**
@@ -318,6 +350,7 @@ function bestEffortDelay(sim: LevelSim, deathAt: number): number {
 
 export function runBot(level: number, trace?: (msg: string) => void): BotResult {
   const sim = new LevelSim(level);
+  sim.probeBoostOverlap = true; // watch that pads never sit on a hazard
   const maxFrames = Math.ceil(levelDurationSec(level) * 120 * 1.3);
   let nextProbeAt = 0;
   let plannedJumpIn = -1;
@@ -380,7 +413,15 @@ export function runBot(level: number, trace?: (msg: string) => void): BotResult 
       );
     }
     if (sim.finished) {
-      return { finished: true, deathM: -1, nearby: "", shieldSaves: sim.shieldSaves, stalled: false };
+      return {
+        finished: true,
+        deathM: -1,
+        nearby: "",
+        shieldSaves: sim.shieldSaves,
+        stalled: false,
+        worstBoostOverlap: sim.worstBoostOverlap,
+        padLaunches: sim.padLaunches,
+      };
     }
     if (sim.dead) {
       trace?.(
@@ -394,6 +435,8 @@ export function runBot(level: number, trace?: (msg: string) => void): BotResult 
         nearby: describeNearby(sim),
         shieldSaves: sim.shieldSaves,
         stalled: false,
+        worstBoostOverlap: sim.worstBoostOverlap,
+        padLaunches: sim.padLaunches,
       };
     }
   }
@@ -403,6 +446,8 @@ export function runBot(level: number, trace?: (msg: string) => void): BotResult 
     nearby: describeNearby(sim),
     shieldSaves: sim.shieldSaves,
     stalled: true,
+    worstBoostOverlap: sim.worstBoostOverlap,
+    padLaunches: sim.padLaunches,
   };
 }
 

@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { POWER_UPS } from "./logic/runner";
+import { BOOST_FOOTPRINT, POWER_UPS } from "./logic/runner";
 import type { BoostKind, PowerUpKind, TrackZoneKind } from "./logic/runner";
 
 /**
@@ -15,8 +15,8 @@ export const ZONE_COLORS: Record<TrackZoneKind, number> = { mirror: 0xeceff1, fl
 
 /** Canonical preview boxes for the guide (top-left origin). */
 export const BOOST_PREVIEW: Record<BoostKind, { w: number; h: number }> = {
-  pad: { w: 90, h: 70 },
-  strip: { w: 200, h: 20 },
+  pad: { w: BOOST_FOOTPRINT.pad, h: 70 },
+  strip: { w: BOOST_FOOTPRINT.strip, h: 20 },
 };
 export const ZONE_GATE_SIZE = { w: 30, h: 380 };
 

@@ -38,6 +38,7 @@ import {
   DASH_LENGTH_PX,
   DASH_MUL,
   PAD_JUMP_VELOCITY,
+  padLaunchSafe,
   POWERUP_UNLOCK_LEVEL,
   POWER_UPS,
   SLOWMO_MUL,
@@ -1094,5 +1095,33 @@ describe("finale levels (every world's 5th)", () => {
     expect(levelGapScale(10)).toBe(0.75);
     // The 1..99 clearability loop above already proves finales stay fair.
     expect(levelGapScale(100)).toBe(0.75);
+  });
+});
+
+describe("padLaunchSafe (pads fire whenever the flight itself is fair)", () => {
+  it("fires on an open track", () => {
+    expect(padLaunchSafe([], 600)).toBe(true);
+  });
+
+  it("soars OVER a mid-flight obstacle (apex ≈ 312px beats an obelisk)", () => {
+    const obelisk: Obstacle = { x: PLAYER_X + 190, w: 30, h: 150, elev: 0, kind: "obelisk" };
+    expect(padLaunchSafe([obelisk], 600)).toBe(true);
+  });
+
+  it("holds fire when the landing zone is lethal", () => {
+    // Spike parked where the pad flight touches down (~390px at 600 px/s).
+    const spike: Obstacle = { x: PLAYER_X + 390, w: 60, h: 60, elev: 0, kind: "spike" };
+    expect(padLaunchSafe([spike], 600)).toBe(false);
+  });
+
+  it("holds fire when touchdown leaves no time to react", () => {
+    // Clean landing, but a spike inside the post-landing tail window.
+    const spike: Obstacle = { x: PLAYER_X + 520, w: 60, h: 60, elev: 0, kind: "spike" };
+    expect(padLaunchSafe([spike], 600)).toBe(false);
+  });
+
+  it("fires when the next hazard is far enough to react to", () => {
+    const spike: Obstacle = { x: PLAYER_X + 900, w: 60, h: 60, elev: 0, kind: "spike" };
+    expect(padLaunchSafe([spike], 600)).toBe(true);
   });
 });

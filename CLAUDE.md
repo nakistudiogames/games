@@ -229,11 +229,26 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    trajectories are unchanged (scaling scroll only made arcs
                    impassable); (3) GATE_GAP_HI 170→240 (old window was
                    mathematically impassable: 72px crossing vs 41px of arc
-                   time); (4) pads fire only when the corridor is clear of
-                   ANY obstacle (padPathBlocked, was overhead-only — pads
-                   could launch into walls); (5) CRUSHER_FREQ 560→2000px
+                   time); (4) pad firing = padLaunchSafe() in runner.ts
+                   (simulates the actual launch: flight death-free + 35
+                   frames of hands-off survival after touchdown, tested) —
+                   NOTE two dead ends preceded it: overhead-only checks let
+                   pads launch into walls, and a clear-corridor check made
+                   pads NEVER fire (corridor 800px > max pattern gap ~730px);
+                   the bot test now asserts ≥3 real pad launches per
+                   25-level group (padLaunches counter) so firing rules
+                   can't silently go inert again; (5) CRUSHER_FREQ 560→2000px
                    period (fast bob shifted the band mid-crossing making
                    some phases impassable). Rng gained clone() for this.
+                   Boost placement: seeded trackBoosts don't know the
+                   (separately-seeded) obstacle layout, so GameScene.update-
+                   Boosts NUDGES any pad/strip that would sit on a hazard
+                   +40px down the track until clear (BOOST_FOOTPRINT in
+                   runner.ts; retires it if it would hit the runway); the sim
+                   mirrors this and the bot test asserts worstBoostOverlap≤0
+                   (no boost body on a hazard body, all 100 levels). Bot test
+                   runtime ~27s (nudge sim in every rollout); LevelSim.clone
+                   deep-copies boosts so rollout nudges don't leak.
                    God mode: dev-only toggle button in the menu, rendered and
                    effective ONLY when location.host === "localhost:5173"
                    (godModeAvailable/godModeOn in MenuScene.ts) — unlocks all
@@ -308,8 +323,8 @@ npm run dev:2048   # merge-2048 on Vite dev server
 npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
-npm test           # vitest (15 + 12 + 9 + 8 + 125 = 169 tests, all green;
-                   # cube-dash includes the ~12s bot playthrough suite)
+npm test           # vitest (15 + 12 + 9 + 8 + 130 = 174 tests, all green;
+                   # cube-dash includes the ~27s bot playthrough suite)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)
 ```
