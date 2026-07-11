@@ -218,9 +218,14 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    update loop (fixed dt 1/120, same rng stream order:
                    patterns then powerups; mirrors GameScene-private consts —
                    keep in sync when touching spawn logic); a lookahead bot
-                   (probe H=100, findSafePlan depth-3 recursive with SAFE_H
-                   tail + REPLAN_MIN 35 base case, desperate bestEffortDelay
-                   when death ≤30 frames) plays ALL 100 levels each npm test
+                   (probe H=100; findSafePlan depth-3 returns a whole jump
+                   SCHEDULE that the executor plays VERBATIM — razor-thin
+                   lines like double-bounces die if replanning drifts a
+                   link by a frame; base case recoverable() = hands-off the
+                   runner must be GROUNDED ≥ REPLAN_MIN 35 frames before the
+                   next hit, mid-air act-ability does NOT count; desperate
+                   bestEffortDelay when death ≤30 frames) plays ALL 100
+                   levels each npm test
                    and must finish with ZERO shield saves (~12s, timeout
                    120s). It CAUGHT + forced these fixes: (1) spawning now
                    uses BASE levelSpeed (maybeSpawnPattern(baseSpeed)) so
@@ -229,15 +234,22 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    trajectories are unchanged (scaling scroll only made arcs
                    impassable); (3) GATE_GAP_HI 170→240 (old window was
                    mathematically impassable: 72px crossing vs 41px of arc
-                   time); (4) pad firing = padLaunchSafe() in runner.ts
-                   (simulates the actual launch: flight death-free + 35
-                   frames of hands-off survival after touchdown, tested) —
-                   NOTE two dead ends preceded it: overhead-only checks let
-                   pads launch into walls, and a clear-corridor check made
-                   pads NEVER fire (corridor 800px > max pattern gap ~730px);
-                   the bot test now asserts ≥3 real pad launches per
-                   25-level group (padLaunches counter) so firing rules
-                   can't silently go inert again; (5) CRUSHER_FREQ 560→2000px
+                   time); (4) PADS = CANNON SHOTS (redesigned per user
+                   2026-07-10): fire UNCONDITIONALLY when run over while
+                   grounded — vy PAD_JUMP_VELOCITY (-1797) with the world
+                   streaming at PAD_FLIGHT_SPEED_MUL 3.23x until touchdown
+                   (≈3x the old flight distance on a ~30° flatter
+                   trajectory), UNTOUCHABLE for the whole flight (padFlight
+                   skips checkDeath — mandatory-fire at 3.23x into dense
+                   sections would otherwise be unfair) + PAD_LANDING_GRACE_MS
+                   400 invuln on touchdown + ONE free air jump mid-flight
+                   (tryJump allowAir = doubleJumpMs>0 || padFlight, air jump
+                   keeps the 3.23x stream until landing); history: overhead-
+                   only checks launched pads into walls, a clear-corridor
+                   check made pads never fire, a padLaunchSafe flight sim
+                   worked but was replaced by this design; the bot asserts
+                   ≥3 real launches per 25-level group so firing can't go
+                   inert again; (5) CRUSHER_FREQ 560→2000px
                    period (fast bob shifted the band mid-crossing making
                    some phases impassable). Rng gained clone() for this.
                    Boost placement: seeded trackBoosts don't know the

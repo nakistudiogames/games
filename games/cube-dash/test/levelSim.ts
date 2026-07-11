@@ -18,7 +18,8 @@ import {
   levelSpeed,
   makePowerUp,
   minGapPx,
-  padLaunchSafe,
+  PAD_FLIGHT_SPEED_MUL,
+  PAD_LANDING_GRACE_MS,
   pickPattern,
   powerUpGapPx,
   stepRunner,
@@ -59,6 +60,8 @@ export class LevelSim {
   private rng: Rng;
   private nextPowerUpAt = FIRST_POWERUP_PX;
   private dashUntilPx = -1;
+  /** Mid-pad-launch: world streams at PAD_FLIGHT_SPEED_MUL, one free air jump. */
+  private padFlight = false;
   private doubleJumpMs = 0;
   private shieldMs = 0;
   private slowmoMs = 0;
@@ -81,6 +84,19 @@ export class LevelSim {
     this.boosts = trackBoosts(level, this.lengthPx).map((b) => ({ b, used: false }));
   }
 
+  /**
+   * True when pressing jump THIS frame does something: grounded/coyote
+   * ground jump, or the air jump granted by a pad flight / double-jump
+   * power-up. Mirrors tryJump's acceptance exactly — the bot plans with it.
+   */
+  canAct(): boolean {
+    return (
+      this.runner.grounded ||
+      (this.runner.coyoteMs ?? 0) > 0 ||
+      ((this.doubleJumpMs > 0 || this.padFlight) && !this.runner.airJumpUsed)
+    );
+  }
+
   clone(): LevelSim {
     const c = Object.create(LevelSim.prototype) as LevelSim;
     Object.assign(c, this, {
@@ -101,7 +117,8 @@ export class LevelSim {
     const dt = SIM_DT;
     const deltaMs = dt * 1000;
     const dashing = this.distancePx < this.dashUntilPx;
-    const speed = this.baseSpeed * (dashing ? DASH_MUL : 1);
+    const speed =
+      this.baseSpeed * (this.padFlight ? PAD_FLIGHT_SPEED_MUL : dashing ? DASH_MUL : 1);
     // Slow-mo scales the whole simulation clock — mirrors GameScene.
     const simDt = dt * (this.slowmoMs > 0 ? SLOWMO_MUL : 1);
     this.distancePx += speed * simDt;
@@ -115,13 +132,19 @@ export class LevelSim {
     this.updatePowerUps(speed, simDt, deltaMs);
     this.updateBoosts(speed);
 
-    if (jump) tryJump(this.runner, this.doubleJumpMs > 0);
+    if (jump) tryJump(this.runner, this.doubleJumpMs > 0 || this.padFlight);
     stepRunner(this.runner, simDt, supportAt(this.runner.y, this.obstacles));
+    if (this.runner.grounded && this.padFlight) {
+      // Flight ends on touchdown, with a short grace to clear the landing.
+      this.padFlight = false;
+      this.invulnMs = Math.max(this.invulnMs, PAD_LANDING_GRACE_MS);
+    }
 
     if (this.lengthPx - this.distancePx <= 40) {
       this.finished = true;
       return;
     }
+    if (this.padFlight) return; // untouchable for the whole cannon flight
     if (this.invulnMs > 0) {
       this.invulnMs -= deltaMs;
       return;
@@ -216,10 +239,13 @@ export class LevelSim {
       bo.used = true;
       if (bo.b.kind === "strip") {
         this.dashUntilPx = bo.b.at + DASH_LENGTH_PX;
-      } else if (this.runner.grounded && padLaunchSafe(this.obstacles, speed)) {
+      } else if (this.runner.grounded) {
+        // Cannon shot: pads always fire when run over (mirrors GameScene).
         this.runner.vy = PAD_JUMP_VELOCITY;
         this.runner.grounded = false;
         this.runner.coyoteMs = 0;
+        this.runner.airJumpUsed = false;
+        this.padFlight = true;
         this.padLaunches++;
       }
     }
@@ -254,7 +280,7 @@ function hit(c: LevelSim, shieldSavesBefore: number): boolean {
 }
 
 /** Frames until a no-jump clone gets hit; -1 if it survives the horizon. */
-function probeDeath(sim: LevelSim, horizon: number): number {
+export function probeDeath(sim: LevelSim, horizon: number): number {
   const c = sim.clone();
   const saves = c.shieldSaves;
   for (let i = 0; i < horizon; i++) {
@@ -277,26 +303,47 @@ const SAFE_H = 62 + SAFE_TAIL; // jump airtime + tail
 
 /**
  * Every hazard's takeoff window opens no earlier than ~32 frames before
- * impact, so a state whose next death is at least this far out is always
- * recoverable by the next replan cycle — the search may treat it as good.
+ * impact, so a replan that can ACT this many frames before the next hit
+ * can always handle it — the search may treat such states as good.
  */
 const REPLAN_MIN = 35;
+
+/**
+ * Chain base case: hands-off from here, the runner must reach the GROUND
+ * ≥ REPLAN_MIN frames before the next hit. "Death is far away" alone is
+ * not enough (a just-jumped state can be 56 frames from an unavoidable
+ * mid-flight death), and a mid-air air-jump moment doesn't count either —
+ * desperate mid-air corrections can't thread gates/arcs; only a grounded
+ * replan has the full toolkit. Mid-flight threats must instead be handled
+ * explicitly by the chain search's remaining depth.
+ */
+function recoverable(sim: LevelSim): boolean {
+  const c = sim.clone();
+  const saves = c.shieldSaves;
+  let groundedAt = -1;
+  for (let i = 0; i < SAFE_H; i++) {
+    if (groundedAt < 0 && c.runner.grounded) groundedAt = i;
+    c.step(false);
+    if (c.finished) return true;
+    if (hit(c, saves)) return groundedAt >= 0 && i - groundedAt >= REPLAN_MIN;
+  }
+  return true; // hit-free for the whole window
+}
 
 /**
  * Finds a chain of jumps whose links each land either SAFE_H-safe, at the
  * finish, or (at the depth floor) with ≥ REPLAN_MIN frames of warning for
  * the next replan — hazard chains can be arbitrarily long (spike, spike,
- * laser, laser…), but execution replans at every landing, so only the near
- * links need precise verification. Returns the first jump's delay, or null
- * when no such chain exists yet (takeoff window still approaching — caller
- * waits). Deeper levels try takeoffs on a 2-frame stride — every real
- * takeoff window is ≥6 frames wide, and success short-circuits the search.
+ * laser, laser…). Returns the WHOLE schedule (jump frames, offsets from
+ * now): the executor must play the validated chain verbatim, because some
+ * lines are razor-thin (e.g. a double-bounce threading an air mine) and a
+ * frame of drift from replanning between links turns them into deaths.
+ * Null = no chain exists yet (takeoff window still approaching — wait).
  */
-function findSafePlan(sim: LevelSim, jumps: number): { delay: number } | null {
+export function findSafePlan(sim: LevelSim, jumps: number): { schedule: number[] } | null {
   const deathAt = probeDeath(sim, SAFE_H);
-  if (deathAt < 0) return { delay: -1 }; // already safe from here
-  if (jumps <= 0) return deathAt >= REPLAN_MIN ? { delay: -1 } : null;
-  const stride = jumps >= 3 ? 1 : 2;
+  if (deathAt < 0) return { schedule: [] }; // already safe from here
+  if (jumps <= 0) return recoverable(sim) ? { schedule: [] } : null;
   const saves = sim.shieldSaves;
   // Shared no-jump prefix advanced incrementally across candidates.
   const prefix = sim.clone();
@@ -305,13 +352,13 @@ function findSafePlan(sim: LevelSim, jumps: number): { delay: number } | null {
       prefix.step(false);
       if (hit(prefix, saves) || prefix.finished) break;
     }
-    if (d % stride !== 0) continue;
-    if (!prefix.runner.grounded) continue; // can't take off mid-air
+    if (!prefix.canAct()) continue; // no jump available at this takeoff
     const c = prefix.clone();
     c.step(true);
     if (hit(c, saves)) continue;
-    if (c.finished) return { delay: d };
-    if (findSafePlan(c, jumps - 1)) return { delay: d }; // earliest safe chain
+    if (c.finished) return { schedule: [d] };
+    const sub = findSafePlan(c, jumps - 1); // earliest safe chain
+    if (sub) return { schedule: [d, ...sub.schedule.map((x) => x + d + 1)] };
   }
   return null;
 }
@@ -329,7 +376,7 @@ function bestEffortDelay(sim: LevelSim, deathAt: number): number {
       prefix.step(false);
       if (hit(prefix, saves) || prefix.finished) break;
     }
-    if (!prefix.runner.grounded) continue;
+    if (!prefix.canAct()) continue;
     const c = prefix.clone();
     c.step(true);
     if (hit(c, saves)) continue;
@@ -353,7 +400,10 @@ export function runBot(level: number, trace?: (msg: string) => void): BotResult 
   sim.probeBoostOverlap = true; // watch that pads never sit on a hazard
   const maxFrames = Math.ceil(levelDurationSec(level) * 120 * 1.3);
   let nextProbeAt = 0;
-  let plannedJumpIn = -1;
+  /** Absolute frames at which to press jump — a validated chain plays out
+   * verbatim (no replanning between its links: some lines are razor-thin
+   * and a frame of drift between links turns them into deaths). */
+  let pending: number[] = [];
   let wasGrounded = true;
 
   for (let frame = 0; frame < maxFrames; frame++) {
@@ -366,14 +416,14 @@ export function runBot(level: number, trace?: (msg: string) => void): BotResult 
     }
     wasGrounded = sim.runner.grounded;
 
-    if (plannedJumpIn === 0) {
-      jump = true;
-      plannedJumpIn = -1;
-      nextProbeAt = frame; // re-assess after this jump resolves
-      trace?.(`f${frame} JUMP (planned)`);
-    } else if (plannedJumpIn > 0) {
-      plannedJumpIn--;
-    } else if (sim.runner.grounded && frame >= nextProbeAt) {
+    if (pending.length > 0) {
+      if (pending[0] === frame) {
+        jump = true;
+        pending.shift();
+        trace?.(`f${frame} JUMP (chain, ${pending.length} left)`);
+        if (pending.length === 0) nextProbeAt = frame; // chain done — re-assess
+      }
+    } else if (sim.canAct() && frame >= nextProbeAt) {
       const deathAt = probeDeath(sim, H);
       if (deathAt < 0) {
         // Safe for the horizon as long as we don't act — cache it.
@@ -381,23 +431,25 @@ export function runBot(level: number, trace?: (msg: string) => void): BotResult 
       } else {
         const plan = findSafePlan(sim, 3);
         trace?.(
-          `f${frame} probe death@${deathAt} plan=${plan ? plan.delay : "none"} ` +
+          `f${frame} probe death@${deathAt} plan=${plan ? `[${plan.schedule.join(",")}]` : "none"} ` +
             `obs=${describeNearby(sim)} y=${Math.round(sim.runner.y)}`,
         );
-        // Commit only to safe-tailed plans. When none exists yet (the
+        // Commit whole safe-tailed chains. When none exists yet (the
         // takeoff window may still be approaching), wait; when death is
         // imminent, take the least-bad jump and let the next replan fight.
-        const commitDelay =
-          plan && plan.delay >= 0
-            ? plan.delay
-            : deathAt <= 30
-              ? bestEffortDelay(sim, deathAt)
-              : -1;
-        if (commitDelay === 0) {
-          jump = true;
-          nextProbeAt = frame;
-        } else if (commitDelay > 0) {
-          plannedJumpIn = commitDelay - 1; // this frame is the first wait step
+        let schedule = plan && plan.schedule.length > 0 ? plan.schedule : null;
+        if (!schedule && !plan && deathAt <= 30) {
+          const d = bestEffortDelay(sim, deathAt);
+          if (d >= 0) schedule = [d];
+        }
+        if (schedule) {
+          pending = schedule.map((d) => frame + d);
+          if (pending[0] === frame) {
+            jump = true;
+            pending.shift();
+            trace?.(`f${frame} JUMP (chain, ${pending.length} left)`);
+            if (pending.length === 0) nextProbeAt = frame;
+          }
         } else {
           nextProbeAt = frame + 4; // wait; the takeoff window is approaching
         }

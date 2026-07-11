@@ -4,12 +4,14 @@ import type { MusicPlayer } from "@mg/core";
 import { floatBanner, textButton } from "@mg/ui";
 import {
   BOOST_FOOTPRINT,
+  PAD_LANDING_GRACE_MS,
   DASH_LENGTH_PX,
   DASH_MUL,
   GROUND_Y,
   KINDS_WITH_PHASE,
   MIRROR_MIN_LEVEL,
   JUMP_VELOCITY,
+  PAD_FLIGHT_SPEED_MUL,
   PAD_JUMP_VELOCITY,
   SLOWMO_MUL,
   PLAYER_SIZE,
@@ -34,7 +36,6 @@ import {
   makePowerUp,
   minGapPx,
   nearMiss,
-  padLaunchSafe,
   phantomSolid,
   pickPattern,
   powerUpGapPx,
@@ -147,6 +148,8 @@ export class GameScene extends Phaser.Scene {
   private boosts: Array<{ b: TrackBoost; view: Phaser.GameObjects.Container; used: boolean }> = [];
   /** Dash-strip effect runs until distancePx crosses this. */
   private dashUntilPx = -1;
+  /** Mid-pad-launch: world streams at PAD_FLIGHT_SPEED_MUL, one free air jump. */
+  private padFlight = false;
   /** Buttons on the death overlay — taps anywhere else instantly retry. */
   private deadButtons: Phaser.GameObjects.Container[] = [];
   private retryReadyAt = 0;
@@ -209,6 +212,7 @@ export class GameScene extends Phaser.Scene {
     this.slowmoMs = 0;
     this.boosts = [];
     this.dashUntilPx = -1;
+    this.padFlight = false;
 
     sfx.setMuted(storage.get("sfxMuted", false));
     haptics.setEnabled(!storage.get("hapticsOff", false));
@@ -683,7 +687,8 @@ export class GameScene extends Phaser.Scene {
     }
     if (this.phase !== "playing") return;
     if (this.time.now < this.resumeGuardUntil) return;
-    const kind = tryJump(this.runner, this.doubleJumpMs > 0);
+    // One free air jump during a pad flight (besides the power-up's).
+    const kind = tryJump(this.runner, this.doubleJumpMs > 0 || this.padFlight);
     if (kind === "ground") {
       sfx.place();
       haptics.tap();
@@ -703,7 +708,8 @@ export class GameScene extends Phaser.Scene {
     const dt = Math.min(deltaMs, MAX_DT_MS) / 1000;
     const baseSpeed = levelSpeed(this.levelNum);
     const dashing = this.distancePx < this.dashUntilPx;
-    const speed = baseSpeed * (dashing ? DASH_MUL : 1);
+    const speed =
+      baseSpeed * (this.padFlight ? PAD_FLIGHT_SPEED_MUL : dashing ? DASH_MUL : 1);
     // Slow-mo scales the whole simulation clock (scroll AND physics), so
     // jump trajectories in px are unchanged and clearability is preserved.
     const simDt = dt * (this.slowmoMs > 0 ? SLOWMO_MUL : 1);
@@ -781,6 +787,11 @@ export class GameScene extends Phaser.Scene {
     const wasAirborne = !this.runner.grounded;
     const impactVy = this.runner.vy; // captured before landing zeroes it
     stepRunner(this.runner, simDt, supportAt(this.runner.y, obsList));
+    if (this.runner.grounded && this.padFlight) {
+      // Flight ends on touchdown, with a short grace to clear the landing.
+      this.padFlight = false;
+      this.invulnMs = Math.max(this.invulnMs, PAD_LANDING_GRACE_MS);
+    }
     if (this.runner.grounded && wasAirborne) {
       this.playerView.rotation = Math.round(this.playerView.rotation / (Math.PI / 2)) * (Math.PI / 2);
       this.dust.explode(6, this.playerView.x, this.runner.y - 4);
@@ -827,6 +838,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    if (this.padFlight) return; // untouchable for the whole cannon flight
     if (this.invulnMs > 0) {
       this.invulnMs -= deltaMs;
       this.playerView.setAlpha(Math.sin(time / 50) > 0 ? 0.4 : 1);
@@ -941,18 +953,20 @@ export class GameScene extends Phaser.Scene {
         this.dashUntilPx = bo.b.at + DASH_LENGTH_PX;
         sfx.clear(2);
         this.sparkle.explode(12, this.playerView.x, this.playerView.y);
-      } else if (
-        this.runner.grounded &&
-        padLaunchSafe(this.obstacles.map((o) => o.obs), speed)
-      ) {
-        // Launch! (Pads hold fire only when the simulated flight would end
-        // badly — deterministic, since layouts and placements are seeded.)
+      } else if (this.runner.grounded) {
+        // CANNON SHOT — pads always fire when run over. The world streams
+        // past at PAD_FLIGHT_SPEED_MUL until touchdown, and the player
+        // keeps one free mid-air jump to steer the landing.
         this.runner.vy = PAD_JUMP_VELOCITY;
         this.runner.grounded = false;
         this.runner.coyoteMs = 0;
-        sfx.clear(1);
-        this.punchScale(0.8, 1.2);
-        this.dust.explode(10, this.playerView.x, GROUND_Y - 4);
+        this.runner.airJumpUsed = false;
+        this.padFlight = true;
+        sfx.clear(2);
+        haptics.tap();
+        this.punchScale(0.7, 1.3);
+        this.dust.explode(14, this.playerView.x, GROUND_Y - 4);
+        this.sparkle.explode(10, this.playerView.x, this.playerView.y);
       }
     }
   }
