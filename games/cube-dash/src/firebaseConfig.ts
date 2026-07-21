@@ -8,15 +8,18 @@
  * committing the real values is fine.
  */
 export const firebaseConfig = {
-  apiKey: "PASTE_ME",
-  authDomain: "PASTE_ME.firebaseapp.com",
-  projectId: "PASTE_ME",
-  storageBucket: "PASTE_ME.firebasestorage.app",
-  messagingSenderId: "PASTE_ME",
-  appId: "PASTE_ME",
+  apiKey: "AIzaSyAZ-vBRCPrJYxjm2IUfa2G6zZw96yR1OMU",
+  authDomain: "dash-937de.firebaseapp.com",
+  projectId: "dash-937de",
+  storageBucket: "dash-937de.firebasestorage.app",
+  messagingSenderId: "659438372273",
+  appId: "1:659438372273:web:b98f92ad37d5ce46636990",
+  measurementId: "G-6E86VV1CP3"
 };
 
 /** True once real values are pasted in. */
 export function firebaseConfigured(): boolean {
   return firebaseConfig.projectId !== "PASTE_ME";
 }
+
+// const analytics = getAnalytics(app);
