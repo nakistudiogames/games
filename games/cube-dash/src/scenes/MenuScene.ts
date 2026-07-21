@@ -30,7 +30,7 @@ import {
 } from "../trackView";
 import { ACHIEVEMENTS, isEarned } from "../achievements";
 import { leaderboard } from "../leaderboard";
-import { formatTimeMs, validName } from "../leaderboardCore";
+import { formatTimeMs, validName } from "@mg/leaderboard";
 import { ensureWorldTextures } from "../worldView";
 
 export const storage = new GameStorage("cube-dash");

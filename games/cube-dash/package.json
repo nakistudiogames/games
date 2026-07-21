@@ -13,8 +13,9 @@
   "dependencies": {
     "@mg/ads": "*",
     "@mg/core": "*",
+    "@mg/firebase": "*",
+    "@mg/leaderboard": "*",
     "@mg/ui": "*",
-    "firebase": "^12.16.0",
     "phaser": "^3.87.0"
   },
   "devDependencies": {

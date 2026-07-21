@@ -33,6 +33,32 @@ packages/ads    @mg/ads  — AdsService interface; NoopAds on web, AdmobAds on n
                            (@capacitor-community/admob: UMP consent, interstitial
                            cooldown default 90s, rewarded via event listeners —
                            NOT yet validated on a real device)
+packages/firebase @mg/firebase — FirebaseConfig type + firebaseConfigured;
+                           getFirebase(config) lazy dynamic-import init +
+                           anonymous auth (memoized promise); firestore() =
+                           lazy memoized firebase/firestore module so games
+                           never import "firebase/*" directly. Owns the
+                           firebase npm dep. SDK stays out of main bundles.
+packages/leaderboard @mg/leaderboard — PURE (zero deps, vitest-tested):
+                           validName/NAME_MIN/MAX, randomHandle, localName,
+                           formatTimeMs, gamePath(gameId,...) ("games/<id>/…"
+                           namespacing convention), DirtySet (persisted
+                           failed-submit tags, e.g. "level:3"/"overall"),
+                           KVStore interface (GameStorage satisfies it).
+firebase/       PROJECT-GLOBAL Firestore rules+indexes for the ONE shared
+                Firebase project (dash-937de) all games use. Deploys run ONLY
+                from here (each deploy replaces the whole ruleset — per-game
+                rules files are forbidden). Layout: games/{gameId}/players/
+                {uid} + generic higher-is-better games/{gameId}/scores/{uid}
+                (covers the 4 simple games, rules already in place) + bespoke
+                cube-dash blocks (levels/overall). Hardened: field allowlists
+                (hasOnly), no profile deletes, per-level minimum-time floor
+                ((15+3*level)*250 ms — division-free duration/4 bound from
+                the level path segment). rules-check.mjs = allow/deny matrix
+                vs the local emulator (needs Java; see docs/firebase-setup
+                .md) — run + all-PASS before ANY rules deploy, extend when a
+                game adds rule blocks. Anonymous uid is per app
+                install — NO cross-game identity; free tier pooled.
 packages/ui     @mg/ui   — Phaser helpers: floatBanner (celebration text,
                            drop shadow, device-res text); textButton (3D
                            extruded rounded button: gradient cap on a darker
@@ -199,24 +225,31 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    character change); @mg/core haptics (navigator.vibrate
                    tap/thud/win, no-op where unsupported); sfx.setMuted +
                    🔊SFX toggles in menu + pause overlay.
-                   LEADERBOARDS (Firebase, 2026-07-10): per-level fastest
-                   clear + overall (highestLevel DESC, totalTimeMs ASC —
-                   ties by lower total). src/leaderboardCore.ts = pure/tested
-                   (randomHandle, computeOverall, formatTimeMs, validName);
-                   src/leaderboard.ts = LeaderboardService w/ FirebaseLeader-
-                   board + NoopLeaderboard (AdsService pattern; Noop until
-                   src/firebaseConfig.ts placeholders are replaced — Rollup
-                   even tree-shakes firebase out entirely then; once real,
-                   firebase loads as LAZY chunks via dynamic import, main
-                   bundle unchanged). Anonymous Firebase Auth (silent, uid =
-                   doc key), editable handle (window.prompt, validName 3-20).
-                   Firestore: players/{uid}, levels/{n}/scores/{uid} (best
-                   only, improvement-only via rules), overall/{uid} (mono-
-                   tonic highestLevel); firestore.rules + indexes.json +
-                   firebase.json in games/cube-dash, deploy per docs/
-                   firebase-setup.md (USER task, pending). Failed submits →
-                   "lbDirty" retried by syncDirty() on 🏅 open. Storage:
-                   "bestTimeMs:<n>" (god-gated), "playerName", "lbDirty".
+                   LEADERBOARDS (Firebase, 2026-07-10; restructured for the
+                   shared project 2026-07-21): per-level fastest clear +
+                   overall (highestLevel DESC, totalTimeMs ASC — ties by
+                   lower total). src/leaderboardCore.ts = cube-specific pure
+                   (computeOverall, Level/OverallEntry; names/format/dirty
+                   moved to @mg/leaderboard); src/leaderboard.ts =
+                   LeaderboardService w/ FirebaseLeaderboard + NoopLeader-
+                   board (AdsService pattern) built on @mg/firebase
+                   (getFirebase + firestore(), lazy chunks — main bundle
+                   clean) + @mg/leaderboard (localName, DirtySet, gamePath).
+                   Anonymous Firebase Auth (silent, uid = doc key), editable
+                   handle (window.prompt, validName 3-20). Firestore (real
+                   config committed, project dash-937de): games/cube-dash/
+                   players/{uid}, games/cube-dash/levels/{n}/scores/{uid}
+                   (best only, improvement-only + per-level min-time floor
+                   via rules), games/cube-dash/overall/{uid} (monotonic
+                   highestLevel); rules/indexes live in repo-root firebase/
+                   (project-global — see that entry), deploy per docs/
+                   firebase-setup.md (USER redeploy pending after the
+                   restructure; old root-level test collections to delete).
+                   Failed submits → DirtySet "lbDirty" tags retried by
+                   syncDirty() on 🏅 open; rule-rejected (permission-denied
+                   = remote already better, e.g. 2nd device) is DROPPED, not
+                   retried. Storage: "bestTimeMs:<n>" (god-gated),
+                   "playerName", "lbDirty".
                    GameScene.completeLevel submits on improvement + async
                    "WORLD RANK #N" line; MenuScene 🏅 overlay = LEVEL tab
                    (◀ n ▶, top 12) / OVERALL tab, own row highlighted,
@@ -357,8 +390,9 @@ npm run dev:2048   # merge-2048 on Vite dev server
 npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
-npm test           # vitest (15 + 12 + 9 + 8 + 130 = 174 tests, all green;
-                   # cube-dash includes the ~32s bot playthrough suite)
+npm test           # vitest (@mg/leaderboard 7 + 15 + 12 + 9 + 8 + 127 = 178
+                   # tests, all green; cube-dash includes the ~32s bot
+                   # playthrough suite)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)
 ```
@@ -380,8 +414,9 @@ npm run build      # production bundle (vite base './' so file:// works in Capac
 2. ⏳ USER: Phase 0 accounts — Play Console ($25; new personal accounts need a
    closed test with **12 testers opted in for 14 consecutive days per app** before
    production), Apple Developer ($99/yr), AdMob + tax info, Xcode + Android Studio
-   — PLUS Firebase project for cube-dash leaderboards (docs/firebase-setup.md:
-   ~10 min, free tier; game runs fine without it until then)
+   — Firebase project ✅ DONE (dash-937de, shared by all games, config
+   committed); ⏳ USER: redeploy restructured rules from repo-root firebase/
+   + delete old root-level test collections (docs/firebase-setup.md)
 3. Next Claude step once #2 lands: `npx cap add ios android` in games/block-blast,
    validate AdmobAds on real devices with test ads, then store listings + publish;
    roll shells out to the other four games on the proven checklist
