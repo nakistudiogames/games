@@ -48,6 +48,18 @@ service cloud.firestore {
         && request.resource.data.score >= resource.data.score;
     }
 
+    // Private cloud saves (@mg/cloudsave): one doc per player per game,
+    // owner-only in BOTH directions (progress isn't public), flat
+    // { data: map, at: number } shape. Garbage inside data only ever hurts
+    // its owner; leaderboard standings are validated separately above.
+    match /games/{game}/saves/{uid} {
+      allow read: if isOwner(uid);
+      allow create, update: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(['data', 'at'])
+        && request.resource.data.data is map
+        && validAt();
+    }
+
     // ---- cube-dash bespoke boards ----
 
     // Per-level best clear times: one doc per player per level; times only

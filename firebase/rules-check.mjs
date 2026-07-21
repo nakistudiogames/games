@@ -39,8 +39,10 @@ async function patch(path, fields, uid) {
   });
   return res.status;
 }
-async function get(path) {
-  const res = await fetch(`${BASE}/${path}`);
+async function get(path, uid) {
+  const res = await fetch(`${BASE}/${path}`, {
+    headers: uid ? { Authorization: `Bearer ${token(uid)}` } : {},
+  });
   return res.status;
 }
 
@@ -87,6 +89,17 @@ check("scores create (word-rush)", await patch("games/word-rush/scores/u1", sc, 
 check("scores lower score", await patch("games/word-rush/scores/u1", { ...sc, score: I(50) }, "u1"), 403);
 check("scores equal score", await patch("games/word-rush/scores/u1", sc, "u1"), 200);
 check("scores other's doc", await patch("games/word-rush/scores/u1", sc, "u2"), 403);
+
+// private cloud saves
+const save = { data: { mapValue: { fields: { unlockedLevel: I(7) } } }, at: I(now) };
+check("save create own", await patch("games/cube-dash/saves/u1", save, "u1"), 200);
+check("save write other's doc", await patch("games/cube-dash/saves/u1", save, "u2"), 403);
+check("save read own", await get("games/cube-dash/saves/u1", "u1"), 200);
+check("save read other's (private)", await get("games/cube-dash/saves/u1", "u2"), 403);
+check("save read unauthenticated", await get("games/cube-dash/saves/u1", null), 403);
+check("save extra field", await patch("games/cube-dash/saves/u3", { ...save, hack: S("x") }, "u3"), 403);
+check("save data not a map", await patch("games/cube-dash/saves/u3", { data: S("junk"), at: I(now) }, "u3"), 403);
+check("save missing at", await patch("games/cube-dash/saves/u3", { data: save.data }, "u3"), 403);
 
 // old root-level paths are dead
 check("old root players path", await patch("players/u1", { name: S("Tester") }, "u1"), 403);
