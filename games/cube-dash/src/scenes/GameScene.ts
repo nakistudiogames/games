@@ -62,6 +62,7 @@ import type {
 } from "../logic/runner";
 import { adsReady } from "../ads";
 import { newlyEarned } from "../achievements";
+import { leaderboard } from "../leaderboard";
 import { characterById } from "../characters";
 import { attachAura, buildCharacterParts } from "../characterView";
 import { musicForLevel, stopAllMusic } from "../music";
@@ -1183,6 +1184,23 @@ export class GameScene extends Phaser.Scene {
     }
     this.toastAchievements();
 
+    // Leaderboard: record + submit the best clear time (never in god mode).
+    let improvedTime = false;
+    if (!godModeOn()) {
+      const timeKey = `bestTimeMs:${this.levelNum}`;
+      const prevBest = storage.get(timeKey, 0);
+      const timeMs = Math.round(this.elapsedMs);
+      if (prevBest <= 0 || timeMs < prevBest) {
+        improvedTime = true;
+        storage.set(timeKey, timeMs);
+        const lb = leaderboard();
+        void lb
+          .submitLevel(this.levelNum, timeMs)
+          .then(() => lb.submitOverall())
+          .catch(() => {});
+      }
+    }
+
     const { width, height } = this.scale;
     const overlay = this.add.container(0, 0).setDepth(100);
     overlay.add(this.add.rectangle(0, 0, width, height, 0x000000, 0.78).setOrigin(0));
@@ -1239,6 +1257,25 @@ export class GameScene extends Phaser.Scene {
         "40px",
       ),
     );
+
+    if (improvedTime) {
+      floatBanner(this, "NEW BEST TIME!", 300, "52px", "#80deea", 120);
+      // World rank arrives async; skip silently when offline/unconfigured.
+      const rankText = this.add
+        .text(width / 2, height * 0.51, "", {
+          fontFamily: "Arial Black, sans-serif",
+          fontSize: "34px",
+          color: "#ffd700",
+        })
+        .setOrigin(0.5);
+      overlay.add(rankText);
+      void leaderboard()
+        .myLevelRank(this.levelNum)
+        .then((rank) => {
+          if (rank && rankText.active) rankText.setText(`🌍 WORLD RANK #${rank}`);
+        })
+        .catch(() => {});
+    }
   }
 
   private die(): void {

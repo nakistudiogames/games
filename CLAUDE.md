@@ -199,6 +199,28 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    character change); @mg/core haptics (navigator.vibrate
                    tap/thud/win, no-op where unsupported); sfx.setMuted +
                    🔊SFX toggles in menu + pause overlay.
+                   LEADERBOARDS (Firebase, 2026-07-10): per-level fastest
+                   clear + overall (highestLevel DESC, totalTimeMs ASC —
+                   ties by lower total). src/leaderboardCore.ts = pure/tested
+                   (randomHandle, computeOverall, formatTimeMs, validName);
+                   src/leaderboard.ts = LeaderboardService w/ FirebaseLeader-
+                   board + NoopLeaderboard (AdsService pattern; Noop until
+                   src/firebaseConfig.ts placeholders are replaced — Rollup
+                   even tree-shakes firebase out entirely then; once real,
+                   firebase loads as LAZY chunks via dynamic import, main
+                   bundle unchanged). Anonymous Firebase Auth (silent, uid =
+                   doc key), editable handle (window.prompt, validName 3-20).
+                   Firestore: players/{uid}, levels/{n}/scores/{uid} (best
+                   only, improvement-only via rules), overall/{uid} (mono-
+                   tonic highestLevel); firestore.rules + indexes.json +
+                   firebase.json in games/cube-dash, deploy per docs/
+                   firebase-setup.md (USER task, pending). Failed submits →
+                   "lbDirty" retried by syncDirty() on 🏅 open. Storage:
+                   "bestTimeMs:<n>" (god-gated), "playerName", "lbDirty".
+                   GameScene.completeLevel submits on improvement + async
+                   "WORLD RANK #N" line; MenuScene 🏅 overlay = LEVEL tab
+                   (◀ n ▶, top 12) / OVERALL tab, own row highlighted,
+                   states for unconfigured/offline/empty.
                    Guide (📖 GUIDE button in menu): tabbed overlay covering
                    ALL track content — clickable category tabs HAZARDS (21
                    kinds, unlock order, 5 pages) / POWER-UPS (3) / BOOSTS
@@ -336,7 +358,7 @@ npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
 npm test           # vitest (15 + 12 + 9 + 8 + 130 = 174 tests, all green;
-                   # cube-dash includes the ~27s bot playthrough suite)
+                   # cube-dash includes the ~32s bot playthrough suite)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)
 ```
@@ -358,6 +380,8 @@ npm run build      # production bundle (vite base './' so file:// works in Capac
 2. ⏳ USER: Phase 0 accounts — Play Console ($25; new personal accounts need a
    closed test with **12 testers opted in for 14 consecutive days per app** before
    production), Apple Developer ($99/yr), AdMob + tax info, Xcode + Android Studio
+   — PLUS Firebase project for cube-dash leaderboards (docs/firebase-setup.md:
+   ~10 min, free tier; game runs fine without it until then)
 3. Next Claude step once #2 lands: `npx cap add ios android` in games/block-blast,
    validate AdmobAds on real devices with test ads, then store listings + publish;
    roll shells out to the other four games on the proven checklist

@@ -29,6 +29,8 @@ import {
   buildZoneGateView,
 } from "../trackView";
 import { ACHIEVEMENTS, isEarned } from "../achievements";
+import { leaderboard } from "../leaderboard";
+import { formatTimeMs, validName } from "../leaderboardCore";
 import { ensureWorldTextures } from "../worldView";
 
 export const storage = new GameStorage("cube-dash");
@@ -119,6 +121,15 @@ export class MenuScene extends Phaser.Scene {
       "📊",
       { text: "#8a93a8", background: "#181d2b" },
       () => this.openStats(),
+      "26px",
+    );
+    textButton(
+      this,
+      450,
+      56,
+      "🏅",
+      { text: "#8a93a8", background: "#181d2b" },
+      () => this.openLeaderboard(),
       "26px",
     );
     const sfxMuted = storage.get("sfxMuted", false);
@@ -717,6 +728,164 @@ export class MenuScene extends Phaser.Scene {
       ),
     );
     return overlay;
+  }
+
+  /**
+   * 🏅 Leaderboards: LEVEL tab (fastest clears per level, with a ◀ n ▶
+   * selector) and OVERALL tab (highest level reached, ties by total time).
+   * All loads are async with stale-guarding; when Firebase isn't configured
+   * the overlay degrades to a friendly notice.
+   */
+  private openLeaderboard(): void {
+    const { width } = this.scale;
+    const overlay = this.buildOverlay("LEADERBOARD");
+    const lb = leaderboard();
+    void lb.syncDirty();
+
+    // Player identity row.
+    const nameText = this.add
+      .text(width / 2 - 40, 205, lb.getName(), {
+        fontFamily: "Arial Black, sans-serif",
+        fontSize: "30px",
+        color: "#80deea",
+      })
+      .setOrigin(0.5);
+    overlay.add(nameText);
+    overlay.add(
+      textButton(
+        this,
+        width / 2 + 170,
+        205,
+        "✏",
+        { text: "#8a93a8", background: "#181d2b" },
+        () => {
+          const entered = window.prompt("Leaderboard name (3-20 characters):", lb.getName());
+          if (entered && validName(entered)) {
+            void lb.setName(entered);
+            nameText.setText(entered.trim());
+          }
+        },
+        "22px",
+      ),
+    );
+
+    let tab: "level" | "overall" = "level";
+    let level = this.selected;
+    let loadToken = 0;
+    const tabs = this.add.container(0, 0);
+    const body = this.add.container(0, 0);
+    const status = this.add
+      .text(width / 2, 620, "", {
+        fontFamily: "Arial, sans-serif",
+        fontSize: "30px",
+        color: "#8a93a8",
+      })
+      .setOrigin(0.5);
+    overlay.add([tabs, body, status]);
+
+    const renderTabs = (): void => {
+      tabs.removeAll(true);
+      for (const [id, label, x] of [["level", "LEVEL", width / 2 - 150], ["overall", "OVERALL", width / 2 + 150]] as const) {
+        const active = tab === id;
+        tabs.add(
+          textButton(
+            this,
+            x,
+            278,
+            label,
+            active
+              ? { text: "#12141c", background: "#8a93a8" }
+              : { text: "#8a93a8", background: "#181d2b" },
+            () => {
+              if (tab === id) return;
+              tab = id;
+              renderTabs();
+              void render();
+            },
+            "26px",
+          ),
+        );
+      }
+    };
+
+    const rowStyle = (own: boolean): Phaser.Types.GameObjects.Text.TextStyle => ({
+      fontFamily: own ? "Arial Black, sans-serif" : "Arial, sans-serif",
+      fontSize: "28px",
+      color: own ? "#80deea" : "#c6cede",
+    });
+
+    const render = async (): Promise<void> => {
+      const token = ++loadToken;
+      body.removeAll(true);
+      if (!lb.ready) {
+        status.setText("Leaderboard not configured yet");
+        return;
+      }
+      status.setText("connecting…");
+
+      if (tab === "level") {
+        // Level selector row (part of the body so it clears on tab switch).
+        const label = this.add
+          .text(width / 2, 350, `LEVEL ${level}`, {
+            fontFamily: "Arial Black, sans-serif",
+            fontSize: "34px",
+            color: `#${levelColor(level).toString(16).padStart(6, "0")}`,
+          })
+          .setOrigin(0.5);
+        body.add(label);
+        body.add(
+          textButton(this, width / 2 - 190, 350, "◀", { text: "#ffffff", background: "#232b3e" }, () => {
+            level = Math.max(1, level - 1);
+            void render();
+          }, "24px"),
+        );
+        body.add(
+          textButton(this, width / 2 + 190, 350, "▶", { text: "#ffffff", background: "#232b3e" }, () => {
+            level = Math.min(100, level + 1);
+            void render();
+          }, "24px"),
+        );
+      }
+
+      try {
+        if (tab === "level") {
+          const entries = await lb.topLevel(level, 12);
+          if (token !== loadToken || !overlay.active) return;
+          status.setText(entries.length === 0 ? "no times yet — set one!" : "");
+          entries.forEach((e, i) => {
+            const own = e.uid === lb.myUid();
+            const y = 420 + i * 52;
+            body.add(this.add.text(120, y, `${i + 1}.`, rowStyle(own)).setOrigin(0, 0.5));
+            body.add(
+              this.add.text(185, y, own ? `${e.name} — you` : e.name, rowStyle(own)).setOrigin(0, 0.5),
+            );
+            body.add(this.add.text(width - 110, y, formatTimeMs(e.timeMs), rowStyle(own)).setOrigin(1, 0.5));
+          });
+        } else {
+          const entries = await lb.topOverall(12);
+          if (token !== loadToken || !overlay.active) return;
+          status.setText(entries.length === 0 ? "no runs yet — be the first!" : "");
+          entries.forEach((e, i) => {
+            const own = e.uid === lb.myUid();
+            const y = 370 + i * 52;
+            body.add(this.add.text(100, y, `${i + 1}.`, rowStyle(own)).setOrigin(0, 0.5));
+            body.add(
+              this.add.text(165, y, own ? `${e.name} — you` : e.name, rowStyle(own)).setOrigin(0, 0.5),
+            );
+            body.add(this.add.text(width - 250, y, `L${e.highestLevel}`, rowStyle(own)).setOrigin(1, 0.5));
+            body.add(
+              this.add.text(width - 100, y, formatTimeMs(e.totalTimeMs), rowStyle(own)).setOrigin(1, 0.5),
+            );
+          });
+        }
+      } catch {
+        if (token !== loadToken || !overlay.active) return;
+        status.setText("offline — try again later");
+      }
+    };
+
+    renderTabs();
+    void render();
   }
 
   private openTrophies(): void {
