@@ -382,7 +382,19 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    tested) + characterView.ts (Phaser drawing, shared by game
                    and menu preview) — dash/blaze/orb/prism/bolt (cube/ball/
                    diamond shapes), unlock at unlockedLevel ≥ minLevel (1-5),
-                   picker in menu, trail tint follows the skin; each has a
+                   picker in menu; each skin has a SIGNATURE TRAIL (2026-07-21:
+                   trailStyle streaks/embers/bubbles/glints/sparks — cube
+                   afterimages / rising fire motes / growing rings / tumbling
+                   gem shards / jittery static — uniqueness tested; built by
+                   buildCharacterTrail in characterView.ts from white trail-*
+                   textures tinted spec.trail, shared by GameScene and the
+                   menu attract demo runner which now emits it; the runner is
+                   screen-stationary so particles stream left at worldSpeed
+                   (levelSpeed passed in — slower hides them inside the body)
+                   and emission runs TRAIL_AIR_BOOST 2.5x denser while
+                   airborne via "baseFrequency" data + setFrequency ONLY on
+                   ground/air transitions — it resets the flow counter — and
+                   an explicit reset on revive); each has a
                    unique always-on aura AROUND the body — hollow outlines /
                    orbiting elements only, never fills over the sprite
                    (pulse halo / ember orbit / sonar rings / gem satellites /
@@ -447,7 +459,7 @@ npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
 npm test           # vitest (@mg/cloudsave 5 + @mg/leaderboard 6 + 15 + 12
-                   # + 9 + 8 + 130 = 185 tests, all green; cube-dash
+                   # + 9 + 8 + 131 = 186 tests, all green; cube-dash
                    # includes the ~32s bot playthrough suite)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)

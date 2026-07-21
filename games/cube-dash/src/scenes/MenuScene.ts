@@ -17,7 +17,7 @@ import {
 import type { BoostKind, ObstacleKind, PowerUpKind, TrackZoneKind } from "../logic/runner";
 import { worldForLevel } from "../worlds";
 import { CHARACTERS, characterById, isCharacterUnlocked } from "../characters";
-import { attachAura, buildCharacterParts } from "../characterView";
+import { attachAura, buildCharacterParts, buildCharacterTrail } from "../characterView";
 import { BOOST_INFO, OBSTACLE_INFO, POWERUP_INFO, ZONE_INFO } from "../obstacles";
 import { OBSTACLE_PREVIEW, buildObstaclePreview } from "../obstacleView";
 import {
@@ -736,6 +736,10 @@ export class MenuScene extends Phaser.Scene {
     const spec = characterById(storage.get("character", "dash"));
     const cube = this.add.container(width * 0.22, groundY - 22, buildCharacterParts(this, spec, 44));
     cube.setScale(0.85);
+    // Demo runner previews the skin's signature trail too.
+    const trail = buildCharacterTrail(this, cube, spec, 0.7, 220);
+    trail.emitting = true;
+    c.add(trail);
     c.add(cube);
     this.tweens.add({
       targets: cube,

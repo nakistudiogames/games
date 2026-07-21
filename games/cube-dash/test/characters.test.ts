@@ -20,6 +20,12 @@ describe("character roster", () => {
     for (const c of CHARACTERS) expect(c.aura.color).toBeGreaterThan(0);
   });
 
+  it("gives every character a unique trail style with tint colors", () => {
+    const styles = CHARACTERS.map((c) => c.trailStyle);
+    expect(new Set(styles).size).toBe(styles.length);
+    for (const c of CHARACTERS) expect(c.trail.length).toBeGreaterThan(0);
+  });
+
   it("unlocks by unlockedLevel threshold", () => {
     const blaze = characterById("blaze");
     expect(isCharacterUnlocked(blaze, 1)).toBe(false);

@@ -229,3 +229,138 @@ export function buildCharacterParts(
   }
   return parts;
 }
+
+/**
+ * Per-character signature running trail (companion to attachAura): a
+ * particle emitter following the body, styled by spec.trailStyle. Shared by
+ * GameScene (the real runner) and MenuScene's attract demo. Returns with
+ * emitting OFF; callers toggle it. `scale` shrinks the effect for smaller
+ * bodies (menu demo cube).
+ *
+ * The runner is SCREEN-STATIONARY while the track scrolls past, so
+ * particles must stream left at ~`worldSpeed` to read as being left behind
+ * on the track (slower and they hide inside the body). The base emission
+ * frequency is stored as data "baseFrequency" so callers can boost
+ * intensity in the air (TRAIL_AIR_BOOST) and restore it on landing.
+ */
+export const TRAIL_AIR_BOOST = 2.5;
+
+export function buildCharacterTrail(
+  scene: Phaser.Scene,
+  follow: Phaser.GameObjects.Container,
+  spec: CharacterSpec,
+  scale = 1,
+  worldSpeed = 480,
+): Phaser.GameObjects.Particles.ParticleEmitter {
+  ensureTrailTextures(scene);
+  const ws = worldSpeed;
+  const tint = [...spec.trail];
+  const base: Phaser.Types.GameObjects.Particles.ParticleEmitterConfig = {
+    follow,
+    tint,
+    emitting: false,
+  };
+  let cfg: Phaser.Types.GameObjects.Particles.ParticleEmitterConfig;
+  let texture: string;
+  switch (spec.trailStyle) {
+    case "streaks": // crisp cube afterimages fading out along the track
+      texture = "trail-square";
+      cfg = {
+        ...base,
+        speedX: { min: -ws - 40, max: -ws + 80 },
+        speedY: { min: -12, max: 12 },
+        lifespan: 340,
+        frequency: 26,
+        scale: { start: 1.3 * scale, end: 0 },
+        alpha: { start: 0.35, end: 0 },
+      };
+      break;
+    case "embers": // fire motes left behind, rising as they gutter out
+      texture = "trail-dot";
+      cfg = {
+        ...base,
+        speedX: { min: -ws - 70, max: -ws + 50 },
+        speedY: { min: -30, max: 10 },
+        gravityY: -150,
+        lifespan: 520,
+        frequency: 20,
+        scale: { start: 1.1 * scale, end: 0 },
+        alpha: { start: 0.85, end: 0 },
+      };
+      break;
+    case "bubbles": // rings that lag the track a little, drifting up to pop
+      texture = "trail-ring";
+      cfg = {
+        ...base,
+        speedX: { min: -ws * 0.75, max: -ws * 0.5 },
+        speedY: { min: -50, max: -5 },
+        lifespan: 600,
+        frequency: 48,
+        scale: { start: 0.4 * scale, end: 1.1 * scale },
+        alpha: { start: 0.55, end: 0 },
+      };
+      break;
+    case "glints": // twinkling gem shards tumbling away down the track
+      texture = "trail-shard";
+      cfg = {
+        ...base,
+        speedX: { min: -ws - 30, max: -ws + 60 },
+        speedY: { min: -25, max: 25 },
+        lifespan: 430,
+        frequency: 38,
+        scale: { start: 1.25 * scale, end: 0 },
+        alpha: { start: 0.9, end: 0 },
+        rotate: { min: 0, max: 360 },
+      };
+      break;
+    case "sparks": // dense jittery electric static crackling behind
+      texture = "trail-dot";
+      cfg = {
+        ...base,
+        speedX: { min: -ws - 160, max: -ws + 120 },
+        speedY: { min: -150, max: 150 },
+        lifespan: 220,
+        frequency: 13,
+        scale: { start: 0.95 * scale, end: 0 },
+        alpha: { start: 1, end: 0 },
+      };
+      break;
+  }
+  const emitter = scene.add.particles(0, 0, texture, cfg);
+  emitter.setData("baseFrequency", cfg.frequency);
+  return emitter;
+}
+
+/** White particle textures (tinted per character), generated once per scene. */
+function ensureTrailTextures(scene: Phaser.Scene): void {
+  if (!scene.textures.exists("trail-dot")) {
+    const g = scene.make.graphics({ x: 0, y: 0 }, false);
+    g.fillStyle(0xffffff, 1);
+    g.fillCircle(4, 4, 4);
+    g.generateTexture("trail-dot", 8, 8);
+    g.destroy();
+  }
+  if (!scene.textures.exists("trail-square")) {
+    const g = scene.make.graphics({ x: 0, y: 0 }, false);
+    g.fillStyle(0xffffff, 1);
+    g.fillRect(0, 0, 14, 14);
+    g.generateTexture("trail-square", 14, 14);
+    g.destroy();
+  }
+  if (!scene.textures.exists("trail-ring")) {
+    const g = scene.make.graphics({ x: 0, y: 0 }, false);
+    g.lineStyle(3, 0xffffff, 1);
+    g.strokeCircle(8, 8, 6);
+    g.generateTexture("trail-ring", 16, 16);
+    g.destroy();
+  }
+  if (!scene.textures.exists("trail-shard")) {
+    const g = scene.make.graphics({ x: 0, y: 0 }, false);
+    g.fillStyle(0xffffff, 1);
+    // Diamond
+    g.fillTriangle(7, 0, 14, 7, 7, 14);
+    g.fillTriangle(7, 0, 0, 7, 7, 14);
+    g.generateTexture("trail-shard", 14, 14);
+    g.destroy();
+  }
+}

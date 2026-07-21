@@ -7,6 +7,13 @@ export type CharacterShape = "cube" | "ball" | "diamond";
 export type CharacterMouth = "smile" | "angry" | "zap";
 /** Animation style of the character's signature aura. */
 export type AuraStyle = "pulse" | "flicker" | "rings" | "spin" | "crackle";
+/**
+ * Visual style of the running trail (per-character signature, like auras):
+ * streaks = crisp cube afterimages; embers = rising fire motes; bubbles =
+ * drifting rings that grow and pop; glints = twinkling gem shards; sparks =
+ * fast jittery electric static.
+ */
+export type TrailStyle = "streaks" | "embers" | "bubbles" | "glints" | "sparks";
 
 export interface CharacterSpec {
   id: string;
@@ -20,6 +27,7 @@ export interface CharacterSpec {
   dark: number;
   face: number;
   trail: readonly number[];
+  trailStyle: TrailStyle;
   aura: { color: number; style: AuraStyle };
 }
 
@@ -35,6 +43,7 @@ export const CHARACTERS: readonly CharacterSpec[] = [
     dark: 0x0d7d8f,
     face: 0x63e5f5,
     trail: [0x26c6da, 0x4dd0e1, 0xffffff],
+    trailStyle: "streaks",
     aura: { color: 0x4dd0e1, style: "pulse" },
   },
   {
@@ -48,6 +57,7 @@ export const CHARACTERS: readonly CharacterSpec[] = [
     dark: 0xbf360c,
     face: 0xff8a65,
     trail: [0xff7043, 0xffab40, 0xffffff],
+    trailStyle: "embers",
     aura: { color: 0xff5722, style: "flicker" },
   },
   {
@@ -61,6 +71,7 @@ export const CHARACTERS: readonly CharacterSpec[] = [
     dark: 0x2e7031,
     face: 0x81c784,
     trail: [0x66bb6a, 0xa5d6a7, 0xffffff],
+    trailStyle: "bubbles",
     aura: { color: 0x81c784, style: "rings" },
   },
   {
@@ -74,6 +85,7 @@ export const CHARACTERS: readonly CharacterSpec[] = [
     dark: 0x6a1b7a,
     face: 0xba68c8,
     trail: [0xab47bc, 0xce93d8, 0xffffff],
+    trailStyle: "glints",
     aura: { color: 0xce93d8, style: "spin" },
   },
   {
@@ -87,6 +99,7 @@ export const CHARACTERS: readonly CharacterSpec[] = [
     dark: 0xb28704,
     face: 0xffd54f,
     trail: [0xffca28, 0xfff59d, 0xffffff],
+    trailStyle: "sparks",
     aura: { color: 0xffee58, style: "crackle" },
   },
 ];

@@ -65,7 +65,7 @@ import { newlyEarned } from "../achievements";
 import { leaderboard } from "../leaderboard";
 import { saves } from "../account";
 import { characterById } from "../characters";
-import { attachAura, buildCharacterParts } from "../characterView";
+import { TRAIL_AIR_BOOST, attachAura, buildCharacterParts, buildCharacterTrail } from "../characterView";
 import { musicForLevel, stopAllMusic } from "../music";
 import { drawObstacle } from "../obstacleView";
 import {
@@ -511,17 +511,9 @@ export class GameScene extends Phaser.Scene {
 
     this.playerShadow = this.add.image(PLAYER_X + s / 2, GROUND_Y + 9, "shadowtex");
 
-    this.trail = this.add.particles(0, 0, "dot", {
-      follow: this.playerView,
-      speedX: { min: -40, max: -10 },
-      speedY: { min: -20, max: 20 },
-      lifespan: 350,
-      frequency: 28,
-      scale: { start: 1.1, end: 0 },
-      alpha: { start: 0.45, end: 0 },
-      tint: [...spec.trail],
-      emitting: false,
-    });
+    // Signature per-character running trail (streaks/embers/bubbles/...),
+    // streaming at this level's track speed so it lays along the ground.
+    this.trail = buildCharacterTrail(this, this.playerView, spec, 1, levelSpeed(this.levelNum));
 
     this.dust = this.add.particles(0, 0, "dot", {
       speed: { min: 40, max: 140 },
@@ -793,6 +785,12 @@ export class GameScene extends Phaser.Scene {
       // Flight ends on touchdown, with a short grace to clear the landing.
       this.padFlight = false;
       this.invulnMs = Math.max(this.invulnMs, PAD_LANDING_GRACE_MS);
+    }
+    // Trail burns hotter while airborne (only touch frequency on the
+    // transition — setFrequency resets the emitter's flow counter).
+    if (!this.runner.grounded !== wasAirborne) {
+      const baseFreq = this.trail.getData("baseFrequency") as number;
+      this.trail.setFrequency(this.runner.grounded ? baseFreq : baseFreq / TRAIL_AIR_BOOST);
     }
     if (this.runner.grounded && wasAirborne) {
       this.playerView.rotation = Math.round(this.playerView.rotation / (Math.PI / 2)) * (Math.PI / 2);
@@ -1423,6 +1421,8 @@ export class GameScene extends Phaser.Scene {
     this.playerView.setVisible(true);
     this.playerShadow.setVisible(true);
     this.trail.emitting = true;
+    // Revive skips the landing transition — drop any airborne trail boost.
+    this.trail.setFrequency(this.trail.getData("baseFrequency") as number);
     this.invulnMs = REVIVE_INVULN_MS;
     this.phase = "playing";
     if (!storage.get("musicMuted", false)) this.bgm.start();
