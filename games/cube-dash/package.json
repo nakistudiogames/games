@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@mg/ads": "*",
+    "@mg/cloudsave": "*",
     "@mg/core": "*",
     "@mg/firebase": "*",
     "@mg/leaderboard": "*",

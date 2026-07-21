@@ -4,7 +4,6 @@ import {
   NAME_MAX,
   NAME_MIN,
   formatTimeMs,
-  gamePath,
   localName,
   randomHandle,
   validName,
@@ -56,13 +55,6 @@ describe("formatTimeMs", () => {
     expect(formatTimeMs(31_540)).toBe("31.5s");
     expect(formatTimeMs(95_000)).toBe("1:35.0");
     expect(formatTimeMs(600)).toBe("0.6s");
-  });
-});
-
-describe("gamePath", () => {
-  it("namespaces every path under games/{gameId}", () => {
-    expect(gamePath("cube-dash", "players", "u1")).toEqual(["games", "cube-dash", "players", "u1"]);
-    expect(gamePath("word-rush", "scores")).toEqual(["games", "word-rush", "scores"]);
   });
 });
 

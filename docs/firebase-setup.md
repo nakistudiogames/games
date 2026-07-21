@@ -24,6 +24,27 @@ console, one ruleset, pooled free tier), not a shared profile.
 4. Project settings → Your apps → **`</>`** Web app → copy the config into
    the game's `src/firebaseConfig.ts`.
 
+## Login providers (USER task, ~2 min)
+
+Real login upgrades the silent anonymous account so progress follows the
+player across devices (cloud saves). One console step per provider:
+
+1. **Google: ✅ enabled (2026-07-21).** The 👤 SIGN IN button in cube-dash
+   works.
+2. **Game Center: enabled in console (2026-07-21), but NATIVE-ONLY** — no
+   web popup exists for it (auth goes through Apple's GameKit). It's wired
+   up when the iOS Capacitor shell is built, via a native plugin. Not a
+   substitute for Sign in with Apple under App Store guideline 4.8.
+3. **Apple (later, at iOS submission):** needs the Apple Developer account —
+   create a Services ID + key in the Apple developer portal, paste into the
+   Apple provider config in the same console screen, then flip
+   `apple.com` to `enabled: true` in `packages/firebase/src/index.ts`
+   (AUTH_PROVIDERS). Required by App Store rules because we offer Google.
+
+The popup auth flow is identical for Google and Apple; only the console
+setup differs. (Android analog of Game Center is Play Games sign-in —
+also native-only, also a later decision.)
+
 ## Testing rules changes (Claude does this, needs Java)
 
 `firebase/rules-check.mjs` is an allow/deny matrix run against the local
@@ -67,9 +88,13 @@ now unreachable under the new rules — delete them in the Firestore console
 2. Register another Web app in the Firebase console (nice for separate
    metrics) or reuse the existing config values; paste into the new game's
    `src/firebaseConfig.ts` (typed by `@mg/firebase`).
-3. Build the game's service on `@mg/firebase` (lazy SDK + anonymous auth) and
-   `@mg/leaderboard` (names, dirty queue, `gamePath`) — see
+3. Build the game's service on `@mg/firebase` (lazy SDK + anonymous auth +
+   login) and `@mg/leaderboard` (names, dirty queue) — see
    `games/cube-dash/src/leaderboard.ts` for the pattern.
+4. Cloud saves: declare which storage keys sync and how they merge (a
+   `saveRule` function, see `games/cube-dash/src/cloudSaveRules.ts`), wire
+   `cloudSave()` from `@mg/cloudsave` (see `src/account.ts`) — the
+   `games/<gameId>/saves/{uid}` rules are already deployed for every game.
 
 ## Verify (cube-dash)
 

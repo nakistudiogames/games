@@ -1,7 +1,7 @@
 import { GameStorage } from "@mg/core";
-import { firebaseConfigured, firestore, getFirebase } from "@mg/firebase";
+import { firebaseConfigured, firestore, gamePath, getFirebase } from "@mg/firebase";
 import type { Firestore } from "@mg/firebase";
-import { DirtySet, gamePath, localName, validName } from "@mg/leaderboard";
+import { DirtySet, localName, validName } from "@mg/leaderboard";
 import { firebaseConfig } from "./firebaseConfig";
 import { computeOverall } from "./leaderboardCore";
 import type { LevelEntry, OverallEntry } from "./leaderboardCore";
@@ -27,6 +27,12 @@ export interface LeaderboardService {
   submitOverall(): Promise<void>;
   /** Retries anything that failed to submit (offline etc.). */
   syncDirty(): Promise<void>;
+  /**
+   * Re-submits ALL local bests + overall. Needed after a login lands on a
+   * DIFFERENT uid (account existed on another device): the new uid has no
+   * rows for this device's results yet.
+   */
+  resubmitAll(): Promise<void>;
   topLevel(level: number, limit: number): Promise<LevelEntry[]>;
   topOverall(limit: number): Promise<OverallEntry[]>;
   /** 1-based world rank for my best on this level, or null. */
@@ -70,6 +76,7 @@ class NoopLeaderboard implements LeaderboardService {
   async submitLevel(): Promise<void> {}
   async submitOverall(): Promise<void> {}
   async syncDirty(): Promise<void> {}
+  async resubmitAll(): Promise<void> {}
   async topLevel(): Promise<LevelEntry[]> {
     return [];
   }
@@ -160,6 +167,14 @@ class FirebaseLeaderboard implements LeaderboardService {
         if (level >= 1 && timeMs > 0) await this.submitLevel(level, timeMs);
       }
     }
+  }
+
+  async resubmitAll(): Promise<void> {
+    for (const [level] of localBests()) {
+      if (store.get(`bestTimeMs:${level}`, 0) > 0) dirty.add(`level:${level}`);
+    }
+    dirty.add("overall");
+    await this.syncDirty();
   }
 
   async topLevel(level: number, limitN: number): Promise<LevelEntry[]> {

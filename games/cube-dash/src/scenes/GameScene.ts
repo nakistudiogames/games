@@ -63,6 +63,7 @@ import type {
 import { adsReady } from "../ads";
 import { newlyEarned } from "../achievements";
 import { leaderboard } from "../leaderboard";
+import { saves } from "../account";
 import { characterById } from "../characters";
 import { attachAura, buildCharacterParts } from "../characterView";
 import { musicForLevel, stopAllMusic } from "../music";
@@ -1200,6 +1201,8 @@ export class GameScene extends Phaser.Scene {
           .catch(() => {});
       }
     }
+    // Cloud save: persist the new progress to the account (dirty-retried).
+    void saves.push();
 
     const { width, height } = this.scale;
     const overlay = this.add.container(0, 0).setDepth(100);

@@ -1,7 +1,7 @@
 /**
  * @mg/leaderboard — pure leaderboard domain logic shared by all games:
- * player handles/names, time formatting, the offline dirty-submit queue,
- * and the games/{gameId}/... Firestore path convention. Deliberately zero
+ * player handles/names, time formatting, and the offline dirty-submit
+ * queue. Deliberately zero
  * Firebase imports (vitest-safe); SDK glue lives in @mg/firebase, and each
  * game builds its own service on the two (see games/cube-dash/src/
  * leaderboard.ts for the pattern).
@@ -63,15 +63,6 @@ export function formatTimeMs(ms: number): string {
   return minutes > 0
     ? `${minutes}:${String(seconds).padStart(2, "0")}.${tenths}`
     : `${seconds}.${tenths}s`;
-}
-
-/**
- * Firestore path convention for the shared project: every game's data lives
- * under games/{gameId}/... so titles never collide. Spread into doc() or
- * collection(): doc(db, ...gamePath("cube-dash", "players", uid)).
- */
-export function gamePath(gameId: string, ...segments: string[]): [string, ...string[]] {
-  return ["games", gameId, ...segments];
 }
 
 /**

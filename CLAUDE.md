@@ -35,22 +35,50 @@ packages/ads    @mg/ads  — AdsService interface; NoopAds on web, AdmobAds on n
                            NOT yet validated on a real device)
 packages/firebase @mg/firebase — FirebaseConfig type + firebaseConfigured;
                            getFirebase(config) lazy dynamic-import init +
-                           anonymous auth (memoized promise); firestore() =
-                           lazy memoized firebase/firestore module so games
-                           never import "firebase/*" directly. Owns the
-                           firebase npm dep. SDK stays out of main bundles.
+                           auth (memoized promise; awaits authStateReady so
+                           a persisted login is never clobbered by a fresh
+                           anon user; handle.uid is a LIVE getter — login
+                           can change it); firestore() = lazy memoized
+                           firebase/firestore module so games never import
+                           "firebase/*" directly; gamePath(gameId,...)
+                           ("games/<id>/…" namespacing convention). LOGIN
+                           (provider-agnostic, one flow for Google+Apple):
+                           AUTH_PROVIDERS (google.com enabled, apple.com
+                           dormant until console setup — flip its `enabled`
+                           at iOS time, no other code), signInWith(cfg,id)
+                           = linkWithPopup upgrade of the anon account (uid
+                           preserved) or, on credential-already-in-use,
+                           signInWithCredential into the existing account
+                           (uidChanged:true → caller must resubmit per-uid
+                           data), null on popup-cancel; signOutToAnonymous
+                           (fresh anon uid). Owns the firebase npm dep. SDK
+                           stays out of main bundles.
 packages/leaderboard @mg/leaderboard — PURE (zero deps, vitest-tested):
                            validName/NAME_MIN/MAX, randomHandle, localName,
-                           formatTimeMs, gamePath(gameId,...) ("games/<id>/…"
-                           namespacing convention), DirtySet (persisted
+                           formatTimeMs, DirtySet (persisted
                            failed-submit tags, e.g. "level:3"/"overall"),
                            KVStore interface (GameStorage satisfies it).
+packages/cloudsave @mg/cloudsave — cross-device progress sync. merge.ts =
+                           PURE tested field-wise save merging (MergeRule:
+                           max/minPos/or/newer per key; SaveDoc {data,at});
+                           index.ts = cloudSave({gameId,config,store,
+                           ruleFor}) → CloudSaveService (Noop when
+                           unconfigured): ONE private Firestore doc
+                           games/<id>/saves/{uid}; sync() = pull+merge+
+                           apply+push (returns locally-changed keys; seeds
+                           cloud on first sync; filters remote keys the
+                           client excludes), push() after progress events;
+                           failures → "saveDirty" retried by next sync.
+                           Reserved local keys saveDirty/saveAt (recency for
+                           "newer" rule) never sync.
 firebase/       PROJECT-GLOBAL Firestore rules+indexes for the ONE shared
                 Firebase project (dash-937de) all games use. Deploys run ONLY
                 from here (each deploy replaces the whole ruleset — per-game
                 rules files are forbidden). Layout: games/{gameId}/players/
                 {uid} + generic higher-is-better games/{gameId}/scores/{uid}
-                (covers the 4 simple games, rules already in place) + bespoke
+                (covers the 4 simple games, rules already in place) + private
+                games/{gameId}/saves/{uid} cloud saves (owner-only BOTH
+                directions, {data: map, at}) + bespoke
                 cube-dash blocks (levels/overall). Hardened: field allowlists
                 (hasOnly), no profile deletes, per-level minimum-time floor
                 ((15+3*level)*250 ms — division-free duration/4 bound from
@@ -224,7 +252,7 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    world-themed backdrop + hopping demo cube, rebuilt on world/
                    character change); @mg/core haptics (navigator.vibrate
                    tap/thud/win, no-op where unsupported); sfx.setMuted +
-                   🔊SFX toggles in menu + pause overlay.
+                   🔊SFX toggles in menu ⚙ SETTINGS + pause overlay.
                    LEADERBOARDS (Firebase, 2026-07-10; restructured for the
                    shared project 2026-07-21): per-level fastest clear +
                    overall (highestLevel DESC, totalTimeMs ASC — ties by
@@ -248,8 +276,36 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    Failed submits → DirtySet "lbDirty" tags retried by
                    syncDirty() on 🏅 open; rule-rejected (permission-denied
                    = remote already better, e.g. 2nd device) is DROPPED, not
-                   retried. Storage: "bestTimeMs:<n>" (god-gated),
+                   retried; resubmitAll() = all bests + overall (for uid
+                   changes). Storage: "bestTimeMs:<n>" (god-gated),
                    "playerName", "lbDirty".
+                   ACCOUNTS + CLOUD SAVE (2026-07-21): 👤 row in the ⚙
+                   SETTINGS overlay (hidden if Firebase unconfigured) —
+                   signed out = "SIGN IN WITH GOOGLE" → popup (single
+                   provider goes straight to popup, keep inside the tap
+                   gesture; chooser row comes with Apple); signed in =
+                   green first-name row → confirm() sign-out.
+                   MENU CHROME (decluttered 2026-07-21): top-left uniform
+                   icon row 📖🏆📊🏅 + single top-right ⚙ opening a
+                   SETTINGS overlay (buildOverlay scaffold) with rows: 🔊
+                   SFX / 🎵 MUSIC / 📳 HAPTICS toggles (music+haptics are
+                   NEW in menu; toggles rebuild the overlay, no scene
+                   restart), 👤 account, ⚡ god mode (dev). No loose
+                   toggle buttons on the menu anymore. src/account.ts: saves = cloudSave
+                   instance; sessionSync() once/session from MenuScene
+                   .create (restarts scene if remote improved progress);
+                   logIn (merge FIRST, then resubmitAll if uidChanged);
+                   logOut (fresh anon, local progress kept, NO resubmit —
+                   would duplicate rows). src/cloudSaveRules.ts saveRule =
+                   PURE tested key→MergeRule map: unlockedLevel/bestPct/
+                   attempts/stat counters max, bestTimeMs minPos, ach/
+                   longNoRevive or, character+mute/haptics prefs+playerName
+                   newer, null for godMode/lbDirty/saveDirty/saveAt/
+                   authName/unknown. GameScene.completeLevel → saves.push().
+                   Storage adds: "authName" (cached display name for sync
+                   UI), "saveAt", "saveDirty". @mg/core adds KVStore/
+                   EnumerableKVStore + GameStorage.keys() (namespace-
+                   stripped, for save collection).
                    GameScene.completeLevel submits on improvement + async
                    "WORLD RANK #N" line; MenuScene 🏅 overlay = LEVEL tab
                    (◀ n ▶, top 12) / OVERALL tab, own row highlighted,
@@ -316,7 +372,7 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    (no boost body on a hazard body, all 100 levels). Bot test
                    runtime ~27s (nudge sim in every rollout); LevelSim.clone
                    deep-copies boosts so rollout nudges don't leak.
-                   God mode: dev-only toggle button in the menu, rendered and
+                   God mode: dev-only toggle row in ⚙ SETTINGS, rendered and
                    effective ONLY when location.host === "localhost:5173"
                    (godModeAvailable/godModeOn in MenuScene.ts) — unlocks all
                    levels for selection and suppresses progress writes
@@ -390,9 +446,9 @@ npm run dev:2048   # merge-2048 on Vite dev server
 npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
-npm test           # vitest (@mg/leaderboard 7 + 15 + 12 + 9 + 8 + 127 = 178
-                   # tests, all green; cube-dash includes the ~32s bot
-                   # playthrough suite)
+npm test           # vitest (@mg/cloudsave 5 + @mg/leaderboard 6 + 15 + 12
+                   # + 9 + 8 + 130 = 185 tests, all green; cube-dash
+                   # includes the ~32s bot playthrough suite)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)
 ```
@@ -415,8 +471,10 @@ npm run build      # production bundle (vite base './' so file:// works in Capac
    closed test with **12 testers opted in for 14 consecutive days per app** before
    production), Apple Developer ($99/yr), AdMob + tax info, Xcode + Android Studio
    — Firebase project ✅ DONE (dash-937de, shared by all games, config
-   committed); ⏳ USER: redeploy restructured rules from repo-root firebase/
-   + delete old root-level test collections (docs/firebase-setup.md)
+   committed, restructured rules deployed, old test data cleaned; Google
+   sign-in provider ✅ enabled 2026-07-21 → 👤 SIGN IN live; Game Center
+   also console-enabled but NATIVE-ONLY — no web popup, wire at iOS shell
+   time; Sign in with Apple still required then per guideline 4.8)
 3. Next Claude step once #2 lands: `npx cap add ios android` in games/block-blast,
    validate AdmobAds on real devices with test ads, then store listings + publish;
    roll shells out to the other four games on the proven checklist

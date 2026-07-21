@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { GameStorage, sfx } from "@mg/core";
+import { GameStorage, haptics, sfx } from "@mg/core";
 import { textButton } from "@mg/ui";
 import {
   FLIP_MIN_LEVEL,
@@ -30,6 +30,8 @@ import {
 } from "../trackView";
 import { ACHIEVEMENTS, isEarned } from "../achievements";
 import { leaderboard } from "../leaderboard";
+import { accountName, logIn, logOut, loginProviders, sessionSync } from "../account";
+import type { AuthProviderId } from "@mg/firebase";
 import { formatTimeMs, validName } from "@mg/leaderboard";
 import { ensureWorldTextures } from "../worldView";
 
@@ -78,6 +80,105 @@ export class MenuScene extends Phaser.Scene {
     super("menu");
   }
 
+  /**
+   * ⚙ Settings: every toggle in one place — SFX / music / haptics, the
+   * account row (sign in to save progress across devices; hidden until
+   * Firebase is configured), and the dev-only god mode. Toggles re-render
+   * by rebuilding the overlay; account/god changes restart the scene
+   * (progress or its clamping may change).
+   */
+  private openSettings(): void {
+    const { width } = this.scale;
+    const overlay = this.buildOverlay("SETTINGS");
+    const reopen = (): void => {
+      overlay.destroy();
+      this.openSettings();
+    };
+    let y = 300;
+    const row = (
+      label: string,
+      colors: { text: string; background: string },
+      onTap: () => void,
+    ): void => {
+      overlay.add(textButton(this, width / 2, y, label, colors, onTap, "30px"));
+      y += 110;
+    };
+    const toggleRow = (label: string, on: boolean, flip: () => void): void => {
+      row(
+        `${label}: ${on ? "ON" : "OFF"}`,
+        { text: on ? "#8a93a8" : "#5c667d", background: "#181d2b" },
+        () => {
+          flip();
+          reopen();
+        },
+      );
+    };
+
+    const sfxOn = !storage.get("sfxMuted", false);
+    toggleRow("🔊 SFX", sfxOn, () => {
+      storage.set("sfxMuted", sfxOn);
+      sfx.setMuted(sfxOn);
+    });
+    const musicOn = !storage.get("musicMuted", false);
+    toggleRow("🎵 MUSIC", musicOn, () => storage.set("musicMuted", musicOn));
+    const hapticsOn = !storage.get("hapticsOff", false);
+    toggleRow("📳 HAPTICS", hapticsOn, () => {
+      storage.set("hapticsOff", hapticsOn);
+      haptics.setEnabled(!hapticsOn);
+    });
+
+    const providers = loginProviders();
+    if (providers.length > 0) {
+      const name = accountName();
+      if (name !== "") {
+        row(
+          `👤 ${name.split(" ")[0]!.slice(0, 12).toUpperCase()} — SIGN OUT`,
+          { text: "#7ee0a3", background: "#12281a" },
+          () => void this.accountSignOut(overlay),
+        );
+      } else {
+        // One provider today → straight to its popup (must stay inside the
+        // tap gesture); a chooser gets added with the second provider.
+        row(
+          `👤 SIGN IN WITH ${providers[0]!.label.toUpperCase()}`,
+          { text: "#80deea", background: "#12262b" },
+          () => void this.accountSignIn(providers[0]!.id),
+        );
+      }
+    }
+
+    if (godModeAvailable()) {
+      const on = storage.get("godMode", false);
+      row(
+        on ? "⚡ GOD MODE: ON" : "⚡ GOD MODE: OFF",
+        on
+          ? { text: "#ffd54f", background: "#3a2f10" }
+          : { text: "#5c667d", background: "#181d2b" },
+        () => {
+          storage.set("godMode", !on);
+          this.scene.restart(); // re-reads progress → selection re-clamps
+        },
+      );
+    }
+  }
+
+  private async accountSignIn(providerId: AuthProviderId): Promise<void> {
+    try {
+      const user = await logIn(providerId);
+      if (user !== null) this.scene.restart(); // re-renders + shows merged progress
+    } catch {
+      window.alert("Sign-in failed — check your connection and try again.");
+    }
+  }
+
+  private async accountSignOut(overlay: Phaser.GameObjects.Container): Promise<void> {
+    const msg = `Signed in as ${accountName()}.\nSign out? Your progress stays saved to the account.`;
+    if (!window.confirm(msg)) return;
+    overlay.destroy();
+    await logOut();
+    this.scene.restart();
+  }
+
   /** Highest selectable level: real progress, or everything in god mode. */
   private unlockedLevel(): number {
     return godModeOn() ? GOD_MODE_MAX_LEVEL : storage.get("unlockedLevel", 1);
@@ -95,76 +196,33 @@ export class MenuScene extends Phaser.Scene {
     this.buildAttract();
     sfx.setMuted(storage.get("sfxMuted", false));
 
-    // Obstacle encyclopedia — every hazard met so far, plus teasers ahead.
-    textButton(
-      this,
-      110,
-      56,
-      "📖 GUIDE",
-      { text: "#8a93a8", background: "#181d2b" },
-      () => this.openEncyclopedia(),
-      "26px",
-    );
-    textButton(
-      this,
-      262,
-      56,
-      "🏆",
-      { text: "#8a93a8", background: "#181d2b" },
-      () => this.openTrophies(),
-      "26px",
-    );
-    textButton(
-      this,
-      356,
-      56,
-      "📊",
-      { text: "#8a93a8", background: "#181d2b" },
-      () => this.openStats(),
-      "26px",
-    );
-    textButton(
-      this,
-      450,
-      56,
-      "🏅",
-      { text: "#8a93a8", background: "#181d2b" },
-      () => this.openLeaderboard(),
-      "26px",
-    );
-    const sfxMuted = storage.get("sfxMuted", false);
-    textButton(
-      this,
-      width - 120,
-      130,
-      sfxMuted ? "🔇 SFX" : "🔊 SFX",
-      { text: sfxMuted ? "#5c667d" : "#8a93a8", background: "#181d2b" },
-      () => {
-        storage.set("sfxMuted", !sfxMuted);
-        sfx.setMuted(!sfxMuted);
-        this.scene.restart(); // re-renders the toggle label
-      },
-      "26px",
-    );
+    // Cloud save: one background sync per session; if the account's remote
+    // save improved local progress, rebuild so unlocks/selection update.
+    void sessionSync().then((changed) => {
+      if (changed.length > 0 && this.scene.isActive("menu")) this.scene.restart();
+    });
 
-    // Dev-only god mode toggle (never rendered off the Vite dev server).
-    if (godModeAvailable()) {
-      const on = storage.get("godMode", false);
-      textButton(
-        this,
-        width - 120,
-        56,
-        on ? "⚡ GOD: ON" : "⚡ GOD: OFF",
-        on
-          ? { text: "#ffd54f", background: "#3a2f10" }
-          : { text: "#5c667d", background: "#181d2b" },
-        () => {
-          storage.set("godMode", !on);
-          this.scene.restart(); // re-reads progress → selection re-clamps
-        },
-        "26px",
-      );
-    }
+    // Top chrome: one uniform icon row (guide / trophies / stats /
+    // leaderboard) plus a single ⚙ that gathers every toggle — SFX, music,
+    // haptics, account, dev god mode — into the settings overlay.
+    const topButtons: ReadonlyArray<[string, () => void]> = [
+      ["📖", () => this.openEncyclopedia()],
+      ["🏆", () => this.openTrophies()],
+      ["📊", () => this.openStats()],
+      ["🏅", () => this.openLeaderboard()],
+    ];
+    topButtons.forEach(([icon, onTap], i) => {
+      textButton(this, 70 + i * 94, 56, icon, { text: "#8a93a8", background: "#181d2b" }, onTap, "26px");
+    });
+    textButton(
+      this,
+      width - 70,
+      56,
+      "⚙",
+      { text: "#8a93a8", background: "#181d2b" },
+      () => this.openSettings(),
+      "26px",
+    );
 
     this.add
       .text(width / 2, height * 0.2, "DASH THE\nCUBE", {
