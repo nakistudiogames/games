@@ -21,8 +21,10 @@ import {
   collectsPowerUp,
   cometElev,
   crusherElev,
+  cycloneSway,
   droneElev,
   droneShift,
+  fluxOn,
   gearShift,
   geyserActive,
   isFinaleLevel,
@@ -36,15 +38,19 @@ import {
   makePowerUp,
   minGapPx,
   nearMiss,
+  novaSatPos,
+  pendulShift,
   phantomSolid,
   pickPattern,
   powerUpGapPx,
   reaperActive,
+  specterSolid,
   stepRunner,
   supportAt,
   swingElev,
   talonActive,
   tentacleSway,
+  wispElev,
   trackBoosts,
   trackZones,
   tryJump,
@@ -755,6 +761,29 @@ export class GameScene extends Phaser.Scene {
         case "reaper":
           (view.getData("blade") as Phaser.GameObjects.Container).setVisible(reaperActive(obs));
           break;
+        case "wisp":
+          view.y = GROUND_Y - obs.h - wispElev(obs);
+          break;
+        case "flux":
+          view.setAlpha(fluxOn(obs) ? 1 : 0.3);
+          break;
+        case "pendul":
+          view.x = obs.x + pendulShift(obs);
+          break;
+        case "cyclone":
+          view.x = obs.x + cycloneSway(obs);
+          break;
+        case "specter":
+          view.setAlpha(specterSolid(obs) ? 1 : 0.25);
+          break;
+        case "nova": {
+          const sat = novaSatPos(obs);
+          (view.getData("satellite") as Phaser.GameObjects.Container).setPosition(
+            obs.w / 2 + sat.dx,
+            obs.h / 2 + sat.dy,
+          );
+          break;
+        }
       }
     }
     while (this.obstacles.length > 0 && this.obstacles[0]!.obs.x + this.obstacles[0]!.obs.w < -40) {
@@ -1113,6 +1142,7 @@ export class GameScene extends Phaser.Scene {
       : obs.kind === "crusher" ? crusherElev(obs)
       : obs.kind === "drone" ? droneElev(obs)
       : obs.kind === "comet" ? cometElev(obs)
+      : obs.kind === "wisp" ? wispElev(obs)
       : obs.elev;
     const top = GROUND_Y - movingElev - obs.h;
     const container = this.add.container(obs.x, top);
@@ -1126,6 +1156,8 @@ export class GameScene extends Phaser.Scene {
     const noShadow: readonly ObstacleKind[] = [
       "pit", "swing", "laser", "geyser", "tentacle", "arc",
       "phantom", "vine", "gear", "gate", "crusher", "urchin", "talon", "drone", "flare", "comet", "reaper",
+      // Air hazards: all floating/glowing — no cast shadows.
+      "halo", "wisp", "lance", "swarm", "flux", "pendul", "rails", "cyclone", "specter", "nova",
     ];
     if (!noShadow.includes(obs.kind)) {
       const shadow = this.add

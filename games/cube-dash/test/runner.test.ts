@@ -1,13 +1,33 @@
 import { describe, expect, it } from "vitest";
 import {
+  AIR_BAND_MIN_ELEV,
+  AIR_KINDS,
   BASE_SPEED,
   COMET_IMPACT_X,
   COYOTE_MS,
+  CYCLONE_SWAY_AMP,
   nearMiss,
   COMET_SLOPE,
   CRUSHER_FREQ,
   DRONE_ELEV_AMP,
   DRONE_ELEV_MID,
+  NOVA_ORBIT_R,
+  NOVA_SAT_R,
+  PENDUL_SHIFT_AMP,
+  RAILS_HI_ELEV,
+  RAILS_HI_TOP,
+  RAILS_LO_ELEV,
+  RAILS_LO_TOP,
+  SWARM_OFFSETS,
+  SWARM_ORB,
+  WISP_ELEV_AMP,
+  WISP_ELEV_MID,
+  cycloneSway,
+  fluxOn,
+  novaSatPos,
+  pendulShift,
+  specterSolid,
+  wispElev,
   FLIP_MIN_LEVEL,
   GATE_GAP_HI,
   GATE_GAP_LO,
@@ -425,36 +445,53 @@ describe("difficulty and patterns", () => {
   });
 });
 
-describe("world obstacle unlocks (+1 kind per world)", () => {
-  it("world 1 has 2 kinds, then one more unlocks per world", () => {
+describe("world obstacle unlocks (+1 kind per world, +1 air kind per 10 levels)", () => {
+  // Air hazards unlocked at or before `level` (second cadence, L10..L100).
+  const airCount = (level: number): number => Math.min(10, Math.floor(level / 10));
+
+  it("world 1 has 2 kinds, then one more unlocks per world (+ air kinds every 10)", () => {
     expect(obstacleKindsForLevel(1).sort()).toEqual(["block", "spike"]);
     expect(obstacleKindsForLevel(5)).toHaveLength(2);
     expect(obstacleKindsForLevel(6)).toHaveLength(3); // + saw
     expect(obstacleKindsForLevel(6)).toContain("saw");
-    expect(obstacleKindsForLevel(10)).toHaveLength(3);
-    expect(obstacleKindsForLevel(11)).toHaveLength(4); // + pit
+    expect(obstacleKindsForLevel(9)).toHaveLength(3);
+    expect(obstacleKindsForLevel(10)).toHaveLength(4); // + halo (air)
+    expect(obstacleKindsForLevel(10)).toContain("halo");
+    expect(obstacleKindsForLevel(11)).toHaveLength(5); // + pit
     expect(obstacleKindsForLevel(11)).toContain("pit");
-    expect(obstacleKindsForLevel(16)).toHaveLength(5); // + swing
+    expect(obstacleKindsForLevel(16)).toHaveLength(6); // + swing
     expect(obstacleKindsForLevel(16)).toContain("swing");
-    expect(obstacleKindsForLevel(21)).toHaveLength(6); // + laser
+    expect(obstacleKindsForLevel(21)).toHaveLength(8); // + wisp (L20) + laser
+    expect(obstacleKindsForLevel(21)).toContain("wisp");
     expect(obstacleKindsForLevel(21)).toContain("laser");
-    expect(obstacleKindsForLevel(26)).toHaveLength(7); // + geyser
+    expect(obstacleKindsForLevel(26)).toHaveLength(9); // + geyser
     expect(obstacleKindsForLevel(26)).toContain("geyser");
-    expect(obstacleKindsForLevel(31)).toHaveLength(8); // + tentacle
+    expect(obstacleKindsForLevel(31)).toHaveLength(11); // + lance (L30) + tentacle
+    expect(obstacleKindsForLevel(31)).toContain("lance");
     expect(obstacleKindsForLevel(31)).toContain("tentacle");
-    expect(obstacleKindsForLevel(36)).toHaveLength(9); // + arc
+    expect(obstacleKindsForLevel(36)).toHaveLength(12); // + arc
     expect(obstacleKindsForLevel(36)).toContain("arc");
-    // Worlds 9-20 keep the cadence going, one kind per world.
+    // Worlds 9-20 keep the cadence going, one kind per world, with the air
+    // cadence adding one more every 10 levels.
     const laterUnlocks: Array<[number, ObstacleKind]> = [
       [41, "phantom"], [46, "vine"], [51, "gear"], [56, "gate"],
       [61, "crusher"], [66, "urchin"], [71, "talon"], [76, "drone"],
       [81, "obelisk"], [86, "flare"], [91, "comet"], [96, "reaper"],
     ];
     laterUnlocks.forEach(([lvl, kind], i) => {
-      expect(obstacleKindsForLevel(lvl)).toHaveLength(10 + i);
+      expect(obstacleKindsForLevel(lvl)).toHaveLength(10 + i + airCount(lvl));
       expect(obstacleKindsForLevel(lvl)).toContain(kind);
       expect(obstacleKindsForLevel(lvl - 1)).not.toContain(kind);
     });
+    // The air cadence itself: one brand-new kind at every multiple of 10.
+    const airUnlocks: Array<[number, ObstacleKind]> = [
+      [10, "halo"], [20, "wisp"], [30, "lance"], [40, "swarm"], [50, "flux"],
+      [60, "pendul"], [70, "rails"], [80, "cyclone"], [90, "specter"], [100, "nova"],
+    ];
+    for (const [lvl, kind] of airUnlocks) {
+      expect(obstacleKindsForLevel(lvl)).toContain(kind);
+      expect(obstacleKindsForLevel(lvl - 1)).not.toContain(kind);
+    }
   });
 
   it("MANDATORY: every unlockable kind gets an intro pattern at its unlock level", () => {
@@ -469,10 +506,19 @@ describe("world obstacle unlocks (+1 kind per world)", () => {
     }
   });
 
-  it("unlock levels land on the first level of each world", () => {
-    for (const level of Object.values(KIND_UNLOCK_LEVEL)) {
-      expect((level - 1) % LEVELS_PER_WORLD).toBe(0);
+  it("unlock levels follow their cadence: world kinds on world starts, air kinds on multiples of 10", () => {
+    const decades = new Set<number>();
+    for (const [kind, level] of Object.entries(KIND_UNLOCK_LEVEL) as Array<[ObstacleKind, number]>) {
+      if (AIR_KINDS.has(kind)) {
+        expect(level % 10, `air kind "${kind}" must unlock on a multiple of 10`).toBe(0);
+        decades.add(level);
+      } else {
+        expect((level - 1) % LEVELS_PER_WORLD, `world kind "${kind}" must unlock on a world start`).toBe(0);
+      }
     }
+    // Exactly one air kind per decade, all ten decades covered.
+    expect([...decades].sort((a, b) => a - b)).toEqual([10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
+    expect(AIR_KINDS.size).toBe(10);
   });
 
   it("no pattern uses a kind before its world unlocks it", () => {
@@ -509,7 +555,7 @@ describe("world obstacle unlocks (+1 kind per world)", () => {
     for (const [k, lvl] of Object.entries(KIND_UNLOCK_LEVEL) as Array<[ObstacleKind, number]>) {
       expect(world8.has(k)).toBe(lvl <= 40);
     }
-    const world20 = kindsAt(99);
+    const world20 = kindsAt(100); // nova (air, L100) completes the roster
     for (const k of Object.keys(KIND_UNLOCK_LEVEL) as ObstacleKind[]) {
       expect(world20.has(k)).toBe(true);
     }
@@ -955,10 +1001,10 @@ describe("reaper (world 20): the blade sweeps as a function of x", () => {
 
 describe("phase bookkeeping", () => {
   it("KINDS_WITH_PHASE lists exactly the motion/cycle kinds", () => {
-    for (const k of ["swing", "geyser", "tentacle", "phantom", "vine", "gear", "crusher", "talon", "drone", "reaper"] as const) {
+    for (const k of ["swing", "geyser", "tentacle", "phantom", "vine", "gear", "crusher", "talon", "drone", "reaper", "wisp", "flux", "pendul", "cyclone", "specter", "nova"] as const) {
       expect(KINDS_WITH_PHASE.has(k)).toBe(true);
     }
-    for (const k of ["spike", "block", "pit", "laser", "arc", "gate", "urchin", "obelisk", "flare", "comet"] as const) {
+    for (const k of ["spike", "block", "pit", "laser", "arc", "gate", "urchin", "obelisk", "flare", "comet", "halo", "lance", "swarm", "rails"] as const) {
       expect(KINDS_WITH_PHASE.has(k)).toBe(false);
     }
   });
@@ -1094,5 +1140,228 @@ describe("finale levels (every world's 5th)", () => {
     expect(levelGapScale(10)).toBe(0.75);
     // The 1..99 clearability loop above already proves finales stay fair.
     expect(levelGapScale(100)).toBe(0.75);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AIR HAZARDS (one per 10 levels): the shared contract is "safe to run
+// under, deadly to jump into" — every block below proves both directions.
+
+describe("air hazards: shared invariants", () => {
+  it("every air-kind pattern obstacle floats at or above the run-under clearance", () => {
+    for (const p of PATTERNS) {
+      for (const o of p.obstacles) {
+        if (AIR_KINDS.has(o.kind)) {
+          expect(o.elev ?? 0, `${p.id}/${o.kind}`).toBeGreaterThanOrEqual(AIR_BAND_MIN_ELEV);
+        }
+      }
+    }
+    expect(AIR_BAND_MIN_ELEV).toBeGreaterThanOrEqual(PLAYER_SIZE + 20);
+  });
+
+  it("every air kind has an intro pattern at a multiple-of-10 unlock", () => {
+    for (const kind of AIR_KINDS) {
+      const lvl = KIND_UNLOCK_LEVEL[kind];
+      expect(lvl % 10).toBe(0);
+      expect(
+        PATTERNS.some((p) => (p.minLevel ?? 1) === lvl && p.obstacles.some((o) => o.kind === kind)),
+      ).toBe(true);
+    }
+  });
+});
+
+describe("halo (L10): static ring parked in the jump lane", () => {
+  const halo = (x: number): Obstacle => ({ x, w: 70, h: 130, elev: 90, kind: "halo" });
+
+  it("a grounded player passes safely underneath", () => {
+    expect(checkDeath(GROUND_Y, [halo(PLAYER_X)])).toBe(false);
+  });
+
+  it("kills inside the ring band, and the band tops out above the jump apex", () => {
+    expect(checkDeath(GROUND_Y - 130, [halo(PLAYER_X)])).toBe(true);
+    expect(90 + 130).toBeGreaterThanOrEqual(215); // no lane over the top
+  });
+});
+
+describe("wisp (L20): bobbing orb that never opens a jump lane", () => {
+  const wisp = (x: number, phase: number): Obstacle => ({ x, w: 56, h: 70, elev: 85, kind: "wisp", phase });
+
+  it("elevation never drops below the run-under threshold", () => {
+    for (let x = 0; x < 2000; x += 23) {
+      for (const phase of [0, 1, 2, 3, 4, 5]) {
+        expect(wispElev(wisp(x, phase))).toBeGreaterThanOrEqual(AIR_BAND_MIN_ELEV);
+      }
+    }
+    expect(WISP_ELEV_MID - WISP_ELEV_AMP).toBe(AIR_BAND_MIN_ELEV);
+  });
+
+  it("grounded pass is safe at every phase; the band kills", () => {
+    for (const phase of [0, 1.3, 2.6, 4.1, 5.5]) {
+      expect(checkDeath(GROUND_Y, [wisp(PLAYER_X, phase)])).toBe(false);
+    }
+    const o = wisp(PLAYER_X, 0);
+    expect(checkDeath(GROUND_Y - wispElev(o) - 20, [o])).toBe(true);
+  });
+});
+
+describe("lance (L30): high thin spear too wide to clear over", () => {
+  const lance = (x: number): Obstacle => ({ x, w: 200, h: 26, elev: 150, kind: "lance" });
+  const airWindow = (speed: number, minHeight: number): number => {
+    const disc = JUMP_VELOCITY ** 2 - 2 * GRAVITY * minHeight;
+    return disc <= 0 ? 0 : (speed * 2 * Math.sqrt(disc)) / GRAVITY;
+  };
+
+  it("cannot be jumped over even at max speed", () => {
+    // Player bottom must exceed the band top (176) for the full 200px span.
+    expect(airWindow(MAX_SPEED, 150 + 26)).toBeLessThan(200);
+  });
+
+  it("run under is safe; the spear band kills", () => {
+    expect(checkDeath(GROUND_Y, [lance(PLAYER_X)])).toBe(false);
+    // Player bottom mid-band (the thin band keeps small fairness insets).
+    expect(checkDeath(GROUND_Y - 160, [lance(PLAYER_X)])).toBe(true);
+  });
+});
+
+describe("swarm (L40): staggered orb trio from one spec", () => {
+  const swarm = (x: number): Obstacle => ({ x, w: 104, h: 96, elev: 85, kind: "swarm" });
+
+  it("the lowest orb still clears the run-under lane", () => {
+    for (const s of SWARM_OFFSETS) {
+      expect(s.elev).toBeGreaterThanOrEqual(AIR_BAND_MIN_ELEV);
+    }
+    expect(SWARM_OFFSETS.length).toBe(3);
+    expect(SWARM_ORB).toBeGreaterThan(0);
+  });
+
+  it("grounded pass is safe across the whole trio; each orb kills", () => {
+    for (const dx of [-40, 0, 40, 80]) {
+      expect(checkDeath(GROUND_Y, [swarm(PLAYER_X + dx)])).toBe(false);
+    }
+    for (const s of SWARM_OFFSETS) {
+      // Player bottom centered on this orb's band.
+      const o = swarm(PLAYER_X - s.dx);
+      expect(checkDeath(GROUND_Y - s.elev - SWARM_ORB / 2, [o])).toBe(true);
+    }
+  });
+});
+
+describe("flux (L50): charged net, harmless while discharged", () => {
+  const flux = (x: number, phase: number): Obstacle => ({ x, w: 110, h: 140, elev: 85, kind: "flux", phase });
+
+  it("kills in the band only while charged; run under is always safe", () => {
+    let sawOn = false;
+    let sawOff = false;
+    for (const phase of [0, 1, 2, 3, 4, 5, 6]) {
+      const o = flux(PLAYER_X, phase);
+      expect(checkDeath(GROUND_Y, [o])).toBe(false);
+      const inBand = checkDeath(GROUND_Y - 140, [o]);
+      expect(inBand).toBe(fluxOn(o));
+      if (fluxOn(o)) sawOn = true;
+      else sawOff = true;
+    }
+    expect(sawOn && sawOff).toBe(true);
+  });
+});
+
+describe("pendul (L60): orb sweeping sideways at a fixed height", () => {
+  const pendul = (x: number, phase: number): Obstacle => ({ x, w: 60, h: 60, elev: 95, kind: "pendul", phase });
+
+  it("sweep stays inside the declared footprint", () => {
+    for (let x = 0; x < 1500; x += 31) {
+      for (const phase of [0, 2, 4]) {
+        expect(Math.abs(pendulShift(pendul(x, phase)))).toBeLessThanOrEqual(PENDUL_SHIFT_AMP);
+      }
+    }
+  });
+
+  it("grounded pass is safe at every phase; the orb kills at its height", () => {
+    for (const phase of [0, 1.1, 2.2, 3.3, 4.4, 5.5]) {
+      expect(checkDeath(GROUND_Y, [pendul(PLAYER_X, phase)])).toBe(false);
+    }
+    // Sweep can move the orb sideways — park the player's bottom mid-orb and
+    // scan x so some position overlaps.
+    const hits = [0, 1, 2, 3, 4, 5].some((phase) =>
+      checkDeath(GROUND_Y - 95 - 30, [pendul(PLAYER_X, phase)]),
+    );
+    expect(hits).toBe(true);
+  });
+});
+
+describe("rails (L70): twin stacked bars, only lane is underneath", () => {
+  const rails = (x: number): Obstacle => ({ x, w: 120, h: 145, elev: 85, kind: "rails" });
+
+  it("no player-sized gap between the bars", () => {
+    expect(RAILS_HI_ELEV - RAILS_LO_TOP).toBeLessThan(PLAYER_SIZE);
+    expect(RAILS_LO_ELEV).toBeGreaterThanOrEqual(AIR_BAND_MIN_ELEV);
+  });
+
+  it("run under is safe; both bars kill", () => {
+    expect(checkDeath(GROUND_Y, [rails(PLAYER_X)])).toBe(false);
+    expect(checkDeath(GROUND_Y - RAILS_LO_ELEV - 20, [rails(PLAYER_X)])).toBe(true); // lower bar
+    expect(checkDeath(GROUND_Y - RAILS_HI_ELEV - 20, [rails(PLAYER_X)])).toBe(true); // upper bar
+  });
+});
+
+describe("cyclone (L80): swaying funnel, whole column off-limits", () => {
+  const cyclone = (x: number, phase: number): Obstacle => ({ x, w: 70, h: 150, elev: 85, kind: "cyclone", phase });
+
+  it("sway stays inside the declared footprint", () => {
+    for (let x = 0; x < 1500; x += 37) {
+      expect(Math.abs(cycloneSway(cyclone(x, 1)))).toBeLessThanOrEqual(CYCLONE_SWAY_AMP);
+    }
+  });
+
+  it("grounded pass is safe at every phase; the funnel band kills", () => {
+    for (const phase of [0, 1.3, 2.6, 4.1, 5.5]) {
+      expect(checkDeath(GROUND_Y, [cyclone(PLAYER_X, phase)])).toBe(false);
+    }
+    expect(checkDeath(GROUND_Y - 160, [cyclone(PLAYER_X, 0)])).toBe(true);
+  });
+});
+
+describe("specter (L90): solid/ghost timing, airborne phantom", () => {
+  const specter = (x: number, phase: number): Obstacle => ({ x, w: 80, h: 130, elev: 88, kind: "specter", phase });
+
+  it("kills in the band only while solid; run under is always safe", () => {
+    let sawSolid = false;
+    let sawGhost = false;
+    for (const phase of [0, 1, 2, 3, 4, 5, 6]) {
+      const o = specter(PLAYER_X, phase);
+      expect(checkDeath(GROUND_Y, [o])).toBe(false);
+      expect(checkDeath(GROUND_Y - 140, [o])).toBe(specterSolid(o));
+      if (specterSolid(o)) sawSolid = true;
+      else sawGhost = true;
+    }
+    expect(sawSolid && sawGhost).toBe(true);
+  });
+});
+
+describe("nova (L100): core orb plus orbiting satellite", () => {
+  const nova = (x: number, phase: number): Obstacle => ({ x, w: 64, h: 64, elev: 110, kind: "nova", phase });
+
+  it("the satellite's lowest sweep still clears the run-under lane", () => {
+    // Center mid = elev + h/2; lowest satellite bottom = mid - orbit - radius.
+    expect(110 + 32 - NOVA_ORBIT_R - NOVA_SAT_R).toBeGreaterThanOrEqual(AIR_BAND_MIN_ELEV);
+    for (let x = 0; x < 2000; x += 41) {
+      const { dy } = novaSatPos(nova(x, 2));
+      expect(Math.abs(dy)).toBeLessThanOrEqual(NOVA_ORBIT_R);
+    }
+  });
+
+  it("grounded pass is safe at every phase; core and satellite kill", () => {
+    for (const phase of [0, 1.3, 2.6, 4.1, 5.5]) {
+      expect(checkDeath(GROUND_Y, [nova(PLAYER_X, phase)])).toBe(false);
+    }
+    // Core: player bottom at the core's center height.
+    expect(checkDeath(GROUND_Y - 110 - 32, [nova(PLAYER_X, 0)])).toBe(true);
+    // Satellite: find a phase that parks it over the player box.
+    const satHit = [0, 0.8, 1.6, 2.4, 3.2, 4, 4.8, 5.6].some((phase) => {
+      const o = nova(PLAYER_X, phase);
+      const { dy } = novaSatPos(o);
+      // Screen coords: satellite center y = GROUND_Y - (elev + h/2) + dy.
+      return checkDeath(GROUND_Y - (110 + 32) + dy + NOVA_SAT_R / 2, [o]);
+    });
+    expect(satHit).toBe(true);
   });
 });

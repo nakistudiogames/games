@@ -36,6 +36,16 @@ export const OBSTACLE_PREVIEW: Record<ObstacleKind, { w: number; h: number }> = 
   flare: { w: 210, h: 24 },
   comet: { w: 54, h: 60 },
   reaper: { w: 60, h: 90 },
+  halo: { w: 70, h: 130 },
+  wisp: { w: 56, h: 70 },
+  lance: { w: 200, h: 26 },
+  swarm: { w: 104, h: 96 },
+  flux: { w: 110, h: 140 },
+  pendul: { w: 60, h: 60 },
+  rails: { w: 120, h: 145 },
+  cyclone: { w: 70, h: 150 },
+  specter: { w: 80, h: 130 },
+  nova: { w: 64, h: 64 },
 };
 
 /**
@@ -116,6 +126,36 @@ export function drawObstacle(
       return;
     case "block":
       drawBlock(scene, container, w, h);
+      return;
+    case "halo":
+      drawHalo(scene, container, w, h);
+      return;
+    case "wisp":
+      drawWisp(scene, container, w, h);
+      return;
+    case "lance":
+      drawLance(scene, container, w, h);
+      return;
+    case "swarm":
+      drawSwarm(scene, container, w, h);
+      return;
+    case "flux":
+      drawFlux(scene, container, w, h);
+      return;
+    case "pendul":
+      drawPendul(scene, container, w);
+      return;
+    case "rails":
+      drawRails(scene, container, w, h);
+      return;
+    case "cyclone":
+      drawCyclone(scene, container, w, h);
+      return;
+    case "specter":
+      drawSpecter(scene, container, w, h);
+      return;
+    case "nova":
+      container.setData("satellite", drawNova(scene, container, w, h));
       return;
   }
 }
@@ -789,4 +829,228 @@ function drawReaper(scene: Scene, container: Container, w: number, h: number): C
   g.fillCircle(w / 2 - 2, 4, 2.5);
   container.add(g);
   return blade;
+}
+
+// ---------------------------------------------------------------------------
+// AIR HAZARDS (one per 10 levels): all float in the jump arc — safe to run
+// under, deadly to jump into. Same graphics idiom as everything above.
+
+/** Vertical golden ring hanging in the jump lane. */
+function drawHalo(scene: Scene, container: Container, w: number, h: number): void {
+  const g = scene.add.graphics();
+  // Outer glow, then the torus as thick ellipse strokes.
+  g.lineStyle(14, 0xffd54f, 0.18);
+  g.strokeEllipse(w / 2, h / 2, w - 8, h - 8);
+  g.lineStyle(8, 0xffb300, 1);
+  g.strokeEllipse(w / 2, h / 2, w - 14, h - 14);
+  g.lineStyle(3, 0xfff8e1, 0.9);
+  g.strokeEllipse(w / 2 - 3, h / 2 - 4, w - 24, h - 24);
+  container.add(g);
+  scene.tweens.add({ targets: g, alpha: 0.55, duration: 700, yoyo: true, repeat: -1 });
+}
+
+/** Pale spirit orb with a trailing wispy tail (the bob comes from wispElev). */
+function drawWisp(scene: Scene, container: Container, w: number, h: number): void {
+  const g = scene.add.graphics();
+  const r = w / 2 - 4;
+  // Tail flames drifting up-left off the orb.
+  g.fillStyle(0x80d8ff, 0.35);
+  g.fillTriangle(w / 2 - r, h / 2, w / 2, h / 2 - 8, 2, h - 6);
+  g.fillTriangle(w / 2, h / 2 + 4, w / 2 + r - 6, h / 2, w * 0.3, h - 2);
+  // Orb: rim, body, hot core.
+  g.fillStyle(0x40c4ff, 1);
+  g.fillCircle(w / 2, h * 0.4, r);
+  g.fillStyle(0xb3e5fc, 1);
+  g.fillCircle(w / 2 - 3, h * 0.4 - 3, r - 7);
+  g.fillStyle(0xffffff, 0.95);
+  g.fillCircle(w / 2 - 5, h * 0.4 - 5, r - 14);
+  container.add(g);
+  scene.tweens.add({ targets: g, alpha: 0.7, duration: 420, yoyo: true, repeat: -1 });
+}
+
+/** Long steel spear pointing at the player, floating high. */
+function drawLance(scene: Scene, container: Container, w: number, h: number): void {
+  const g = scene.add.graphics();
+  const tip = 26;
+  // Shaft: lit top edge, shaded bottom.
+  g.fillStyle(0x90a4ae, 1);
+  g.fillRect(tip, 4, w - tip - 6, h - 8);
+  g.fillStyle(0xcfd8dc, 1);
+  g.fillRect(tip, 4, w - tip - 6, (h - 8) / 2);
+  g.fillStyle(0x546e7a, 1);
+  g.fillRect(w - 14, 2, 12, h - 4); // tail cap
+  // Point (faces the incoming player).
+  g.fillStyle(0xeceff1, 1);
+  g.fillTriangle(0, h / 2, tip, 2, tip, h - 2);
+  container.add(g);
+  const glint = scene.add.rectangle(w * 0.45, h / 2 - 4, 26, 3, 0xffffff, 0.8);
+  container.add(glint);
+  scene.tweens.add({ targets: glint, x: w * 0.8, alpha: 0.1, duration: 900, repeat: -1 });
+}
+
+/** Trio of small spiked orbs staggered up the jump arc (SWARM_OFFSETS). */
+function drawSwarm(scene: Scene, container: Container, w: number, h: number): void {
+  // Local layout mirrors runner.ts SWARM_OFFSETS relative to the envelope:
+  // orb bottoms at elev 85/118/145 inside an elev-85, h-96 spec.
+  const orbs: ReadonlyArray<[number, number]> = [[0, 60], [34, 27], [68, 0]];
+  for (const [ox, oy] of orbs) {
+    const g = scene.add.graphics();
+    g.setPosition(ox + 18, oy + 18);
+    g.fillStyle(0xe53935, 1);
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      g.fillTriangle(
+        Math.cos(a - 0.3) * 10, Math.sin(a - 0.3) * 10,
+        Math.cos(a + 0.3) * 10, Math.sin(a + 0.3) * 10,
+        Math.cos(a) * 19, Math.sin(a) * 19,
+      );
+    }
+    g.fillStyle(0xb71c1c, 1);
+    g.fillCircle(0, 0, 12);
+    g.fillStyle(0xff8a80, 1);
+    g.fillCircle(-3, -3, 6);
+    container.add(g);
+    scene.tweens.add({ targets: g, angle: 360, duration: 3200 + ox * 8, repeat: -1 });
+  }
+  void w;
+  void h;
+}
+
+/** Charged energy net — GameScene dims the whole view while discharged. */
+function drawFlux(scene: Scene, container: Container, w: number, h: number): void {
+  const g = scene.add.graphics();
+  // Frame emitters top and bottom.
+  g.fillStyle(0x2e7d32, 1);
+  g.fillRect(0, 0, w, 10);
+  g.fillRect(0, h - 10, w, 10);
+  g.fillStyle(0xa5d6a7, 1);
+  g.fillRect(0, 0, w, 4);
+  // Mesh.
+  g.lineStyle(3, 0x69f0ae, 0.9);
+  for (let x = 10; x < w; x += 20) g.lineBetween(x, 10, x, h - 10);
+  for (let y = 22; y < h - 10; y += 24) g.lineBetween(2, y, w - 2, y);
+  container.add(g);
+  const shimmer = scene.add.rectangle(w / 2, h / 2, w - 4, h - 20, 0x69f0ae, 0.14);
+  container.add(shimmer);
+  scene.tweens.add({ targets: shimmer, alpha: 0.32, duration: 300, yoyo: true, repeat: -1 });
+}
+
+/** Violet spiked orb that sweeps sideways (motion from pendulShift). */
+function drawPendul(scene: Scene, container: Container, w: number): void {
+  const r = w / 2;
+  const g = scene.add.graphics();
+  g.setPosition(r, r);
+  g.fillStyle(0x7e57c2, 1);
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * Math.PI * 2;
+    g.fillTriangle(
+      Math.cos(a - 0.2) * (r - 10), Math.sin(a - 0.2) * (r - 10),
+      Math.cos(a + 0.2) * (r - 10), Math.sin(a + 0.2) * (r - 10),
+      Math.cos(a) * (r + 4), Math.sin(a) * (r + 4),
+    );
+  }
+  g.fillStyle(0x4527a0, 1);
+  g.fillCircle(0, 0, r - 8);
+  g.fillStyle(0xb39ddb, 1);
+  g.fillCircle(-3, -3, r - 15);
+  g.fillStyle(0xede7f6, 0.9);
+  g.fillCircle(-r * 0.25, -r * 0.25, 5);
+  container.add(g);
+  scene.tweens.add({ targets: g, angle: -360, duration: 2600, repeat: -1 });
+}
+
+/** Twin stacked energy bars; the safe lane is beneath the lower one. */
+function drawRails(scene: Scene, container: Container, w: number, h: number): void {
+  // Envelope maps elevation 230 (top) .. 85 (bottom): upper bar occupies
+  // local y 0..65, lower bar 105..145 — mirrors RAILS_* consts.
+  const g = scene.add.graphics();
+  const bar = (y: number, bh: number): void => {
+    g.fillStyle(0xef6c00, 0.35);
+    g.fillRect(-6, y - 4, w + 12, bh + 8);
+    g.fillStyle(0xff9800, 1);
+    g.fillRect(0, y, w, bh);
+    g.fillStyle(0xffe0b2, 1);
+    g.fillRect(0, y, w, 6);
+    g.fillStyle(0xe65100, 1);
+    g.fillRect(0, y + bh - 6, w, 6);
+  };
+  bar(0, 65);
+  bar(105, 40);
+  container.add(g);
+  const spark = scene.add.rectangle(0, 85, 10, 18, 0xffcc80, 0.9);
+  container.add(spark);
+  scene.tweens.add({ targets: spark, x: w, duration: 500, yoyo: true, repeat: -1 });
+  void h;
+}
+
+/** Teal vortex funnel: stacked ellipses narrowing downward, always turning. */
+function drawCyclone(scene: Scene, container: Container, w: number, h: number): void {
+  const g = scene.add.graphics();
+  const bands = 6;
+  for (let i = 0; i < bands; i++) {
+    const t = i / (bands - 1);
+    const bw = w * (1 - 0.55 * t);
+    const y = 8 + t * (h - 20);
+    g.fillStyle(i % 2 === 0 ? 0x26a69a : 0x00897b, 0.9);
+    g.fillEllipse(w / 2, y, bw, 16);
+    g.fillStyle(0xb2dfdb, 0.5);
+    g.fillEllipse(w / 2 - bw * 0.18, y - 3, bw * 0.4, 5);
+  }
+  container.add(g);
+  // Spin illusion: the whole stack wobbles horizontally.
+  scene.tweens.add({ targets: g, scaleX: 0.86, duration: 260, yoyo: true, repeat: -1 });
+}
+
+/** Ghost that fades between solid and harmless (alpha from GameScene). */
+function drawSpecter(scene: Scene, container: Container, w: number, h: number): void {
+  const g = scene.add.graphics();
+  // Dome + wavy skirt.
+  g.fillStyle(0xcfd8dc, 0.9);
+  g.fillEllipse(w / 2, h * 0.32, w - 6, h * 0.6);
+  g.fillRect(3, h * 0.32, w - 6, h * 0.45);
+  for (let i = 0; i < 4; i++) {
+    const seg = (w - 6) / 4;
+    g.fillEllipse(3 + seg * (i + 0.5), h * 0.77, seg, 22);
+  }
+  g.fillStyle(0xeceff1, 0.9);
+  g.fillEllipse(w / 2 - 4, h * 0.26, w * 0.55, h * 0.32);
+  // Hollow eyes + mouth.
+  g.fillStyle(0x263238, 1);
+  g.fillEllipse(w * 0.36, h * 0.3, 12, 18);
+  g.fillEllipse(w * 0.64, h * 0.3, 12, 18);
+  g.fillEllipse(w * 0.5, h * 0.5, 10, 14);
+  container.add(g);
+  scene.tweens.add({ targets: g, y: 6, duration: 900, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+}
+
+/** Magenta core orb; returns the orbiting satellite (positioned per frame). */
+function drawNova(scene: Scene, container: Container, w: number, h: number): Container {
+  const g = scene.add.graphics();
+  const r = w / 2;
+  g.fillStyle(0xd500f9, 0.2);
+  g.fillCircle(r, h / 2, r + 10);
+  g.fillStyle(0xaa00ff, 1);
+  g.fillCircle(r, h / 2, r - 4);
+  g.fillStyle(0xea80fc, 1);
+  g.fillCircle(r - 4, h / 2 - 4, r - 12);
+  g.fillStyle(0xffffff, 0.9);
+  g.fillCircle(r - 8, h / 2 - 8, 6);
+  container.add(g);
+  // Orbit path hint.
+  const path = scene.add.graphics();
+  path.lineStyle(2, 0xea80fc, 0.25);
+  path.strokeCircle(r, h / 2, 40);
+  container.add(path);
+  // Satellite: small hot spark, orbit driven by novaSatPos.
+  const sat = scene.add.container(w, h / 2);
+  const sg = scene.add.graphics();
+  sg.fillStyle(0xd500f9, 0.35);
+  sg.fillCircle(0, 0, 18);
+  sg.fillStyle(0xf3e5f5, 1);
+  sg.fillCircle(0, 0, 11);
+  sg.fillStyle(0xffffff, 1);
+  sg.fillCircle(-2, -2, 5);
+  sat.add(sg);
+  container.add(sat);
+  return sat;
 }

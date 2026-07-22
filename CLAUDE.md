@@ -151,8 +151,29 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    hitbox), flare L86 (210x24 fire ribbon, arc-style, widest
                    jump), comet L91 (54x60 fireball, cometElev=max(0,.55*(x-
                    480)) — grounded before reaching the player), reaper L96
-                   (60x90 scythe sweeping via reaperActive). KINDS_WITH_PHASE
-                   set drives seeded phase assignment at spawn. MIRROR/FLIP
+                   (60x90 scythe sweeping via reaperActive). AIR HAZARDS
+                   (2026-07-21): SECOND unlock cadence — AIR_KINDS set, one
+                   new floating hazard per 10 levels, all DEADLY TO JUMP
+                   INTO / SAFE TO RUN UNDER (band bottom ≥ AIR_BAND_MIN_ELEV
+                   85, band top above the ~200 jump apex or too wide to
+                   clear over; both directions tested per kind): halo L10
+                   (static ring), wisp L20 (elev bobs 85-145, wispElev),
+                   lance L30 (200x26 spear @150 — airWindow < span), swarm
+                   L40 (3 orbs from ONE spec, SWARM_OFFSETS), flux L50
+                   (net, lethal half-duty fluxOn), pendul L60 (orb sweeps
+                   ±44 pendulShift), rails L70 (twin bars 85-125 + 165-230
+                   from one spec, no player-sized gap), cyclone L80 (funnel
+                   sways ±20 cycloneSway), specter L90 (solid/ghost
+                   specterSolid), nova L100 (core + orbiting satellite
+                   novaSatPos, sat bottom ≥ 88). Each has an intro pattern
+                   at its exact unlock + a conservative combo (flanking
+                   ground obstacles ≥ ~340px so no mandatory jump crosses a
+                   band). The unlock-cadence test checks BOTH rules (world
+                   kinds on world starts, air kinds on multiples of 10, one
+                   per decade); bot cleared all 100 re-rolled levels first
+                   try. KINDS_WITH_PHASE
+                   set (now incl. wisp/flux/pendul/cyclone/specter/nova)
+                   drives seeded phase assignment at spawn. MIRROR/FLIP
                    ZONES: trackZones(level,lengthPx) (seeded levelSeed^0x51af,
                    separate from layout rng) → 1-2 "mirror" zones L41+ and
                    1-2 "flip" zones L61+, each 12-20% of length clamped
@@ -311,8 +332,8 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    (◀ n ▶, top 12) / OVERALL tab, own row highlighted,
                    states for unconfigured/offline/empty.
                    Guide (📖 GUIDE button in menu): tabbed overlay covering
-                   ALL track content — clickable category tabs HAZARDS (21
-                   kinds, unlock order, 5 pages) / POWER-UPS (3) / BOOSTS
+                   ALL track content — clickable category tabs HAZARDS (31
+                   kinds, unlock order, 7 pages) / POWER-UPS (3) / BOOSTS
                    (pad+strip) / GATES (mirror+gravity), per-category
                    pagination, active tab highlighted (GUIDE_CATEGORIES +
                    generic guideEntries() w/ category field in MenuScene);
@@ -459,7 +480,7 @@ npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
 npm test           # vitest (@mg/cloudsave 5 + @mg/leaderboard 6 + 15 + 12
-                   # + 9 + 8 + 131 = 186 tests, all green; cube-dash
+                   # + 9 + 8 + 151 = 206 tests, all green; cube-dash
                    # includes the ~32s bot playthrough suite)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)

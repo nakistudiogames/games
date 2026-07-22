@@ -97,6 +97,48 @@ export const OBSTACLE_INFO: Record<ObstacleKind, ObstacleInfo> = {
     name: "Chrome Reaper",
     blurb: "A scythe that sweeps the track in pulses. The post never moves — the blade decides your timing.",
   },
+  // ---- Air hazards (one new per 10 levels): deadly to jump into, always
+  // safe to run under — keep your feet on the ground.
+  halo: {
+    name: "Sky Halo",
+    blurb: "A golden ring hanging exactly where your jump would take you. Stay grounded and stroll straight under it.",
+  },
+  wisp: {
+    name: "Restless Wisp",
+    blurb: "A spirit orb drifting up and down in the jump lane. However it bobs, the path beneath it is always open.",
+  },
+  lance: {
+    name: "Sky Lance",
+    blurb: "A long spear floating high and flat. Too wide to hop over — duck your instincts and run the full length below it.",
+  },
+  swarm: {
+    name: "Crimson Swarm",
+    blurb: "Three barbed orbs stacked up the arc of your jump. There is no lane over the top — walk under the whole ladder.",
+  },
+  flux: {
+    name: "Flux Net",
+    blurb: "An energy mesh that charges and discharges. Charged or not, jumping in is a mistake — the floor lane is always safe.",
+  },
+  pendul: {
+    name: "Dread Pendulum",
+    blurb: "A spiked orb sweeping side to side at head height. Watch the swing if you like, but the answer is always: run under.",
+  },
+  rails: {
+    name: "Twin Rails",
+    blurb: "Two stacked energy bars. A jump threads you straight into one of them — the gap under the lower rail is the only way.",
+  },
+  cyclone: {
+    name: "Teal Cyclone",
+    blurb: "A spinning funnel that sways in the air. Its whole column is off-limits; the ground beneath it never is.",
+  },
+  specter: {
+    name: "Pale Specter",
+    blurb: "A ghost that fades between solid and mist. Don't gamble on its mood mid-air — pass beneath and keep moving.",
+  },
+  nova: {
+    name: "Violet Nova",
+    blurb: "A blazing core with a satellite whipping around it. The orbit owns the air — the track below stays clear.",
+  },
 };
 
 // The guide also covers the friendly side of the track. Same Record trick:
