@@ -424,7 +424,11 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    God mode: dev-only toggle row in ⚙ SETTINGS, rendered and
                    effective ONLY when location.host === "localhost:5173"
                    (godModeAvailable/godModeOn in MenuScene.ts) — unlocks all
-                   levels for selection and suppresses progress writes
+                   levels AND all characters for selection (via
+                   characterAvailable() = godModeOn || isCharacterUnlocked;
+                   fixed 2026-07-21, was reading raw unlockedLevel so god
+                   mode didn't reveal skins, and apex@101 exceeds the 99
+                   cap anyway) and suppresses progress writes
                    (unlockedLevel bump + bestPct) so toggling off restores
                    real progress untouched. Characters:
                    cosmetic skins in src/characters.ts (pure data/rules,
@@ -442,7 +446,10 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    across skins — uniqueness is the (shape,aura,trail)
                    triple, tested; orb/blaze/prism/bolt worlds prescribed by
                    user),
-                   picker in menu; each skin has a SIGNATURE TRAIL (2026-07-21:
+                   picker in menu (◀ ▶ arrows + name/⊞ tap opens
+                   openCharacterGrid — 5-col overlay of live previews,
+                   locked tiles dimmed w/ "🔒 World N", ✓ on current, tap to
+                   equip; added 2026-07-21); each skin has a SIGNATURE TRAIL (2026-07-21:
                    trailStyle streaks/embers/bubbles/glints/sparks — cube
                    afterimages / rising fire motes / growing rings / tumbling
                    gem shards / jittery static — uniqueness tested; built by

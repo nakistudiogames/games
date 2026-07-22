@@ -17,6 +17,7 @@ import {
 import type { BoostKind, ObstacleKind, PowerUpKind, TrackZoneKind } from "../logic/runner";
 import { worldForLevel } from "../worlds";
 import { CHARACTERS, characterById, isCharacterUnlocked } from "../characters";
+import type { CharacterSpec } from "../characters";
 import { attachAura, buildCharacterParts, buildCharacterTrail } from "../characterView";
 import { BOOST_INFO, OBSTACLE_INFO, POWERUP_INFO, ZONE_INFO } from "../obstacles";
 import { OBSTACLE_PREVIEW, buildObstaclePreview } from "../obstacleView";
@@ -318,7 +319,10 @@ export class MenuScene extends Phaser.Scene {
         fontSize: "32px",
         color: "#ffffff",
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true });
+    // Tapping the name (or the ⊞ button) opens the full character grid.
+    this.charName.on("pointerdown", () => this.openCharacterGrid());
     const savedId = storage.get("character", "dash");
     this.charIndex = Math.max(0, CHARACTERS.findIndex((c) => c.id === savedId));
     textButton(this, width / 2 - 160, height * 0.85, "◀", { text: "#ffffff", background: "#232b3e" }, () => {
@@ -329,15 +333,23 @@ export class MenuScene extends Phaser.Scene {
       this.charIndex = (this.charIndex + 1) % CHARACTERS.length;
       this.refreshCharacter();
     }, "40px");
+    textButton(this, width / 2 + 250, height * 0.85, "⊞", { text: "#8a93a8", background: "#181d2b" }, () => {
+      this.openCharacterGrid();
+    }, "34px");
 
     this.refresh();
     this.refreshCharacter();
   }
 
+  /** A character is selectable once its world is cleared — or in god mode. */
+  private characterAvailable(spec: CharacterSpec): boolean {
+    return godModeOn() || isCharacterUnlocked(spec, storage.get("unlockedLevel", 1));
+  }
+
   private refreshCharacter(): void {
     const { width, height } = this.scale;
     const spec = CHARACTERS[this.charIndex]!;
-    const unlocked = isCharacterUnlocked(spec, storage.get("unlockedLevel", 1));
+    const unlocked = this.characterAvailable(spec);
 
     this.charPreview?.destroy();
     this.charPreview = this.add
@@ -356,6 +368,66 @@ export class MenuScene extends Phaser.Scene {
         .setText(`🔒 ${spec.name} — clear World ${spec.world}`)
         .setColor("#5c667d");
     }
+  }
+
+  /**
+   * Full character-select grid: every skin with a live preview, locked ones
+   * dimmed and captioned with the world that unlocks them. Tapping an
+   * available skin equips it and closes. God mode unlocks all.
+   */
+  private openCharacterGrid(): void {
+    const { width } = this.scale;
+    const overlay = this.buildOverlay("CHARACTERS");
+    const cols = 5;
+    const cellW = 138;
+    const cellH = 152;
+    const startX = width / 2 - ((cols - 1) * cellW) / 2;
+    const startY = 296;
+    const currentId = storage.get("character", "dash");
+
+    CHARACTERS.forEach((spec, i) => {
+      const cx = startX + (i % cols) * cellW;
+      const cy = startY + Math.floor(i / cols) * cellH;
+      const available = this.characterAvailable(spec);
+      const isCurrent = spec.id === currentId;
+
+      const tile = this.add
+        .rectangle(cx, cy, 124, 138, available ? 0x161d2e : 0x11141d)
+        .setStrokeStyle(3, isCurrent ? spec.color : available ? 0x2a3350 : 0x242a38);
+      overlay.add(tile);
+
+      // Live preview (small), dimmed while locked (no aura, to keep it clean).
+      const preview = this.add
+        .container(cx, cy - 16, buildCharacterParts(this, spec, 48))
+        .setAlpha(available ? 1 : 0.3);
+      if (available) attachAura(this, preview, spec, 48);
+      overlay.add(preview);
+
+      const caption = available ? spec.name : `🔒 World ${spec.world}`;
+      overlay.add(
+        this.add
+          .text(cx, cy + 50, caption, {
+            fontFamily: available ? "Arial Black, sans-serif" : "Arial, sans-serif",
+            fontSize: available ? "18px" : "16px",
+            color: available ? `#${spec.color.toString(16).padStart(6, "0")}` : "#5c667d",
+            align: "center",
+          })
+          .setOrigin(0.5),
+      );
+      if (isCurrent) {
+        overlay.add(this.add.text(cx + 48, cy - 54, "✓", { fontSize: "22px", color: "#a5d6a7" }).setOrigin(0.5));
+      }
+
+      if (available) {
+        tile.setInteractive({ useHandCursor: true });
+        tile.on("pointerdown", () => {
+          storage.set("character", spec.id);
+          this.charIndex = i;
+          overlay.destroy();
+          this.refreshCharacter();
+        });
+      }
+    });
   }
 
   /** Overlay grid to jump straight to any unlocked level. */
