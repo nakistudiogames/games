@@ -442,6 +442,12 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    lightning arcs; attachAura in characterView.ts, uniqueness
                    tested) — distinct from the gold double-jump overlay.
                    tap/space/up to jump,
+                   JUMP SENSITIVITY (2026-07-21): releasing while rising
+                   clamps vy to JUMP_CUT_VY (JUMP_VELOCITY*0.4) via pure
+                   cutJump() — tap = hop, hold = full arc; STRICTLY OPT-IN
+                   (no release event = full jump → clearability + bot
+                   untouched; pad launches vy<-1550 not cuttable; buffered
+                   jumps whose press already ended stay full),
                    jump buffering (110ms), score = meters; rewarded revive
                    clears 900px ahead + 1.2s invuln. Visual pass: all textures
                    generated at runtime via Graphics.generateTexture (gradient
@@ -500,7 +506,7 @@ npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
 npm test           # vitest (@mg/cloudsave 5 + @mg/leaderboard 6 + 15 + 12
-                   # + 9 + 8 + 151 = 206 tests, all green; cube-dash
+                   # + 9 + 8 + 154 = 209 tests, all green; cube-dash
                    # includes the ~74s bot playthrough suite)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)

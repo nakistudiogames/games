@@ -18,6 +18,7 @@ import {
   checkDeath,
   collectsPowerUp,
   cometElev,
+  cutJump,
   crusherElev,
   cycloneSway,
   droneElev,
@@ -273,6 +274,15 @@ export class GameScene extends Phaser.Scene {
     });
     this.input.keyboard?.on("keydown-UP", () => this.onTap());
     this.input.keyboard?.on("keydown-ESC", () => this.togglePause());
+    // Jump sensitivity: releasing while still rising shortens the arc
+    // (tap = hop, hold = full jump). Buffered/coyote jumps whose press was
+    // already released stay full-height — forgiving by design.
+    const release = (): void => {
+      if (this.phase === "playing") cutJump(this.runner);
+    };
+    this.input.on("pointerup", release);
+    this.input.keyboard?.on("keyup-SPACE", release);
+    this.input.keyboard?.on("keyup-UP", release);
 
     // Auto-pause when the app is backgrounded or the window loses focus.
     // Phaser's HIDDEN maps to visibilitychange, which Capacitor WebViews also

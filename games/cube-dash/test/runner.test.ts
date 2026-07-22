@@ -93,6 +93,9 @@ import {
   obstacleKindsForLevel,
   pickPattern,
   powerUpGapPx,
+  cutJump,
+  JUMP_CUT_FACTOR,
+  JUMP_CUT_VY,
   stepRunner,
   supportAt,
   swingElev,
@@ -1366,5 +1369,51 @@ describe("nova (L100): core orb plus orbiting satellite", () => {
       return checkDeath(GROUND_Y - (110 + 32) + dy + NOVA_SAT_R / 2, [o]);
     });
     expect(satHit).toBe(true);
+  });
+});
+
+describe("jump sensitivity (early-release cut)", () => {
+  const arcHeight = (releaseAfterFrames: number | null): number => {
+    const r = onGround();
+    jump(r);
+    let peak = GROUND_Y;
+    for (let i = 0; i < 300 && !r.grounded; i++) {
+      if (releaseAfterFrames !== null && i === releaseAfterFrames) cutJump(r);
+      stepRunner(r, 1 / 120, GROUND_Y);
+      peak = Math.min(peak, r.y);
+    }
+    return GROUND_Y - peak;
+  };
+
+  it("an instant release makes a short hop; no release keeps the full arc", () => {
+    const full = arcHeight(null);
+    const hop = arcHeight(0);
+    expect(full).toBeGreaterThan(180); // full arc untouched — clearability intact
+    expect(hop).toBeLessThan(full / 2);
+    expect(hop).toBeGreaterThan(20);
+    // Later releases give taller arcs — press length maps to height.
+    expect(arcHeight(10)).toBeGreaterThan(hop);
+    expect(arcHeight(10)).toBeLessThan(full);
+  });
+
+  it("only cuts while rising fast — falling and pad launches are untouched", () => {
+    const r = onGround();
+    expect(cutJump(r)).toBe(false); // grounded, vy 0
+    jump(r);
+    while (r.vy < JUMP_CUT_VY) stepRunner(r, 1 / 120, GROUND_Y);
+    expect(cutJump(r)).toBe(false); // already past the cut window
+    const flying = onGround();
+    flying.grounded = false;
+    flying.vy = PAD_JUMP_VELOCITY; // cannon launch is not a jump press
+    expect(cutJump(flying)).toBe(false);
+    expect(flying.vy).toBe(PAD_JUMP_VELOCITY);
+  });
+
+  it("cut velocity is a fixed fraction of the jump", () => {
+    expect(JUMP_CUT_VY).toBe(JUMP_VELOCITY * JUMP_CUT_FACTOR);
+    const r = onGround();
+    jump(r);
+    expect(cutJump(r)).toBe(true);
+    expect(r.vy).toBe(JUMP_CUT_VY);
   });
 });

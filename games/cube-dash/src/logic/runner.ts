@@ -459,6 +459,26 @@ export function tryJump(r: Runner, allowAirJump: boolean): "ground" | "air" | nu
   return null;
 }
 
+/**
+ * Jump sensitivity: releasing the press while still rising clamps the
+ * remaining upward velocity, so a tap is a short hop and a full hold is the
+ * full arc. STRICTLY OPT-IN — with no release event a jump is always
+ * full-height, so every clearability guarantee (and the bot, which never
+ * releases early) is untouched. Pad cannon launches (vy below
+ * JUMP_VELOCITY) are deliberately not cuttable.
+ */
+export const JUMP_CUT_FACTOR = 0.4;
+export const JUMP_CUT_VY = JUMP_VELOCITY * JUMP_CUT_FACTOR;
+
+/** Applies the early-release cut; returns true if the arc was shortened. */
+export function cutJump(r: Runner): boolean {
+  if (r.vy < JUMP_CUT_VY && r.vy >= JUMP_VELOCITY) {
+    r.vy = JUMP_CUT_VY;
+    return true;
+  }
+  return false;
+}
+
 export function jump(r: Runner): void {
   tryJump(r, false);
 }
