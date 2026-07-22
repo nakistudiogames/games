@@ -18,7 +18,7 @@ const MAX_KEYS = new Set([
   "totalMeters",
   "nearMisses",
   "shieldSaves",
-  "slowmoUses",
+  "surgeUses",
 ]);
 
 const OR_KEYS = new Set(["longNoRevive"]);

@@ -153,9 +153,9 @@ export const POWERUP_INFO: Record<PowerUpKind, ObstacleInfo> = {
     name: "Shield",
     blurb: "For fifteen seconds, one fatal hit shatters the shield instead of you — then you just keep running.",
   },
-  slowmo: {
-    name: "Slow-Mo",
-    blurb: "The whole world drops to 85% speed for six seconds. Breathe, read the pattern, react.",
+  surge: {
+    name: "Speed Surge",
+    blurb: "The whole world runs at 150% for six seconds. Same jumps, less thinking time — and a faster clear on the clock.",
   },
 };
 

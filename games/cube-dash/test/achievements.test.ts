@@ -8,7 +8,7 @@ const emptyStats = (over: Partial<PlayerStats> = {}): PlayerStats => ({
   totalMeters: 0,
   nearMisses: 0,
   shieldSaves: 0,
-  slowmoUses: 0,
+  surgeUses: 0,
   longNoRevive: false,
   ...over,
 });
@@ -46,7 +46,7 @@ describe("achievements", () => {
     expect(by("traveler").check(emptyStats({ totalMeters: 10_000 }))).toBe(true);
     expect(by("marathon").check(emptyStats({ longNoRevive: true }))).toBe(true);
     expect(by("guardian").check(emptyStats({ shieldSaves: 1 }))).toBe(true);
-    expect(by("timebender").check(emptyStats({ slowmoUses: 1 }))).toBe(true);
+    expect(by("surgerider").check(emptyStats({ surgeUses: 1 }))).toBe(true);
     expect(by("halfway").check(emptyStats({ cleared: new Set([50]) }))).toBe(true);
   });
 });

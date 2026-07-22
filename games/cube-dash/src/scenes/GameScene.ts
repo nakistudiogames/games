@@ -4,7 +4,6 @@ import type { MusicPlayer } from "@mg/core";
 import { floatBanner, textButton } from "@mg/ui";
 import {
   BOOST_FOOTPRINT,
-  PAD_LANDING_GRACE_MS,
   DASH_LENGTH_PX,
   DASH_MUL,
   GROUND_Y,
@@ -12,7 +11,7 @@ import {
   MIRROR_MIN_LEVEL,
   PAD_FLIGHT_SPEED_MUL,
   PAD_JUMP_VELOCITY,
-  SLOWMO_MUL,
+  SURGE_MUL,
   PLAYER_SIZE,
   PLAYER_X,
   POWER_UPS,
@@ -152,7 +151,9 @@ export class GameScene extends Phaser.Scene {
   private attemptText: Phaser.GameObjects.Text | null = null;
   private squashTween: Phaser.Tweens.Tween | null = null;
   private shieldMs = 0;
-  private slowmoMs = 0;
+  /** Post-shield-save pass-through: true only while still inside the hit. */
+  private shieldEscaping = false;
+  private surgeMs = 0;
   private shieldRing!: Phaser.GameObjects.Arc;
   private boosts: Array<{ b: TrackBoost; view: Phaser.GameObjects.Container; used: boolean }> = [];
   /** Dash-strip effect runs until distancePx crosses this. */
@@ -218,7 +219,8 @@ export class GameScene extends Phaser.Scene {
     this.retryReadyAt = 0;
     this.squashTween = null;
     this.shieldMs = 0;
-    this.slowmoMs = 0;
+    this.shieldEscaping = false;
+    this.surgeMs = 0;
     this.boosts = [];
     this.dashUntilPx = -1;
     this.padFlight = false;
@@ -722,7 +724,10 @@ export class GameScene extends Phaser.Scene {
       baseSpeed * (this.padFlight ? PAD_FLIGHT_SPEED_MUL : dashing ? DASH_MUL : 1);
     // Slow-mo scales the whole simulation clock (scroll AND physics), so
     // jump trajectories in px are unchanged and clearability is preserved.
-    const simDt = dt * (this.slowmoMs > 0 ? SLOWMO_MUL : 1);
+    // Surge speeds the whole sim clock (px trajectories unchanged); paused
+    // during pad flights so stacked compression can't undercut the
+    // leaderboard rules' minimum-clear-time floor.
+    const simDt = dt * (this.surgeMs > 0 && !this.padFlight ? SURGE_MUL : 1);
     this.distancePx += speed * simDt;
 
     // Parallax: far stars drift, skyline rolls, ground grid matches the track.
@@ -820,9 +825,10 @@ export class GameScene extends Phaser.Scene {
     const wasAirborne = !this.runner.grounded;
     stepRunner(this.runner, simDt, supportAt(this.runner.y, obsList));
     if (this.runner.grounded && this.padFlight) {
-      // Flight ends on touchdown, with a short grace to clear the landing.
+      // Flight ends on touchdown — no landing grace; the flight itself is
+      // lethal too (invincibility removed per user): the one free air jump
+      // is the player's steering tool.
       this.padFlight = false;
-      this.invulnMs = Math.max(this.invulnMs, PAD_LANDING_GRACE_MS);
     }
     // Trail burns hotter while airborne (only touch frequency on the
     // transition — setFrequency resets the emitter's flow counter).
@@ -866,7 +872,6 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    if (this.padFlight) return; // untouchable for the whole cannon flight
     if (this.invulnMs > 0) {
       this.invulnMs -= deltaMs;
       this.playerView.setAlpha(Math.sin(time / 50) > 0 ? 0.4 : 1);
@@ -874,10 +879,13 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (checkDeath(this.runner.y, obsList)) {
+      if (this.shieldEscaping) return; // still crossing the hit that broke it
       if (this.shieldMs > 0) {
-        // The shield takes the hit: break it, blink through, keep running.
+        // The shield takes the hit: break it and pass through THIS collision
+        // only — lethality re-arms on the first hazard-free frame (no timed
+        // invincibility window).
         this.shieldMs = 0;
-        this.invulnMs = 800;
+        this.shieldEscaping = true;
         storage.set("shieldSaves", storage.get("shieldSaves", 0) + 1);
         sfx.clear(3);
         this.sparkle.explode(18, this.playerView.x, this.playerView.y);
@@ -887,6 +895,7 @@ export class GameScene extends Phaser.Scene {
       }
       return;
     }
+    this.shieldEscaping = false;
     // Near-miss: mark obstacles grazed, celebrate once safely past them.
     for (const ov of this.obstacles) {
       if (!ov.grazed && nearMiss(this.runner.y, [ov.obs])) ov.grazed = true;
@@ -1071,11 +1080,11 @@ export class GameScene extends Phaser.Scene {
     // Tick down active effects and rebuild the badge column.
     this.doubleJumpMs = Math.max(0, this.doubleJumpMs - deltaMs);
     this.shieldMs = Math.max(0, this.shieldMs - deltaMs);
-    this.slowmoMs = Math.max(0, this.slowmoMs - deltaMs);
+    this.surgeMs = Math.max(0, this.surgeMs - deltaMs);
     const badges: string[] = [];
     if (this.doubleJumpMs > 0) badges.push(`⇈ ${Math.ceil(this.doubleJumpMs / 1000)}s`);
     if (this.shieldMs > 0) badges.push(`⛨ ${Math.ceil(this.shieldMs / 1000)}s`);
-    if (this.slowmoMs > 0) badges.push(`⏳ ${Math.ceil(this.slowmoMs / 1000)}s`);
+    if (this.surgeMs > 0) badges.push(`≫ ${Math.ceil(this.surgeMs / 1000)}s`);
     this.powerBadge.setText(badges.join("\n"));
     this.aura.setVisible(this.doubleJumpMs > 0);
     if (this.doubleJumpMs > 0) this.aura.setAlpha(0.2 + 0.12 * Math.sin(this.time.now / 110));
@@ -1092,8 +1101,8 @@ export class GameScene extends Phaser.Scene {
     } else if (p.kind === "shield") {
       this.shieldMs = spec.durationMs;
     } else {
-      this.slowmoMs = spec.durationMs;
-      storage.set("slowmoUses", storage.get("slowmoUses", 0) + 1);
+      this.surgeMs = spec.durationMs;
+      storage.set("surgeUses", storage.get("surgeUses", 0) + 1);
     }
     sfx.clear(2);
     this.sparkle.explode(16, PLAYER_X + PLAYER_SIZE / 2, p.y);

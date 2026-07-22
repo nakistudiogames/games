@@ -8,7 +8,7 @@ import {
   PAD_JUMP_VELOCITY,
   PLAYER_X,
   POWER_UPS,
-  SLOWMO_MUL,
+  SURGE_MUL,
   checkDeath,
   collectsPowerUp,
   levelDurationSec,
@@ -19,7 +19,6 @@ import {
   makePowerUp,
   minGapPx,
   PAD_FLIGHT_SPEED_MUL,
-  PAD_LANDING_GRACE_MS,
   pickPattern,
   powerUpGapPx,
   stepRunner,
@@ -43,7 +42,6 @@ const CLEAR_RUNWAY_PX = 1200;
 const FIRST_POWERUP_PX = 1500;
 const POWERUP_SPAWN_X = WORLD_WIDTH + 60;
 const POWERUP_BLOCK_PAD = 160;
-const SHIELD_INVULN_MS = 800;
 
 export const SIM_DT = 1 / 120;
 
@@ -64,7 +62,8 @@ export class LevelSim {
   private padFlight = false;
   private doubleJumpMs = 0;
   private shieldMs = 0;
-  private slowmoMs = 0;
+  private shieldEscaping = false;
+  private surgeMs = 0;
   private invulnMs = 0;
   shieldSaves = 0;
   dead = false;
@@ -119,8 +118,9 @@ export class LevelSim {
     const dashing = this.distancePx < this.dashUntilPx;
     const speed =
       this.baseSpeed * (this.padFlight ? PAD_FLIGHT_SPEED_MUL : dashing ? DASH_MUL : 1);
-    // Slow-mo scales the whole simulation clock — mirrors GameScene.
-    const simDt = dt * (this.slowmoMs > 0 ? SLOWMO_MUL : 1);
+    // Surge scales the whole simulation clock, suspended during pad
+    // flights — mirrors GameScene.
+    const simDt = dt * (this.surgeMs > 0 && !this.padFlight ? SURGE_MUL : 1);
     this.distancePx += speed * simDt;
 
     for (const o of this.obstacles) o.x -= speed * simDt;
@@ -135,29 +135,32 @@ export class LevelSim {
     if (jump) tryJump(this.runner, this.doubleJumpMs > 0 || this.padFlight);
     stepRunner(this.runner, simDt, supportAt(this.runner.y, this.obstacles));
     if (this.runner.grounded && this.padFlight) {
-      // Flight ends on touchdown, with a short grace to clear the landing.
+      // Flight ends on touchdown — no landing grace, and the flight itself
+      // is lethal (mirrors GameScene: pad invincibility removed).
       this.padFlight = false;
-      this.invulnMs = Math.max(this.invulnMs, PAD_LANDING_GRACE_MS);
     }
 
     if (this.lengthPx - this.distancePx <= 40) {
       this.finished = true;
       return;
     }
-    if (this.padFlight) return; // untouchable for the whole cannon flight
     if (this.invulnMs > 0) {
       this.invulnMs -= deltaMs;
       return;
     }
     if (checkDeath(this.runner.y, this.obstacles)) {
+      if (this.shieldEscaping) return; // still crossing the hit that broke it
       if (this.shieldMs > 0) {
+        // Pass-through for THIS collision only — mirrors GameScene.
         this.shieldMs = 0;
-        this.invulnMs = SHIELD_INVULN_MS;
+        this.shieldEscaping = true;
         this.shieldSaves++;
       } else {
         this.dead = true;
       }
+      return;
     }
+    this.shieldEscaping = false;
   }
 
   /** Spawning uses the BASE speed — layout is a pure function of distance. */
@@ -189,7 +192,7 @@ export class LevelSim {
         const spec = POWER_UPS[p.kind];
         if (p.kind === "doubleJump") this.doubleJumpMs = spec.durationMs;
         else if (p.kind === "shield") this.shieldMs = spec.durationMs;
-        else this.slowmoMs = spec.durationMs;
+        else this.surgeMs = spec.durationMs;
         return false;
       }
       return true;
@@ -206,7 +209,7 @@ export class LevelSim {
     }
     this.doubleJumpMs = Math.max(0, this.doubleJumpMs - deltaMs);
     this.shieldMs = Math.max(0, this.shieldMs - deltaMs);
-    this.slowmoMs = Math.max(0, this.slowmoMs - deltaMs);
+    this.surgeMs = Math.max(0, this.surgeMs - deltaMs);
   }
 
   private updateBoosts(speed: number): void {

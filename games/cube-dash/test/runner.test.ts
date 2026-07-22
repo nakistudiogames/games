@@ -60,7 +60,7 @@ import {
   PAD_JUMP_VELOCITY,
   POWERUP_UNLOCK_LEVEL,
   POWER_UPS,
-  SLOWMO_MUL,
+  SURGE_MUL,
   isFinaleLevel,
   trackBoosts,
   VINE_AMP,
@@ -1059,7 +1059,7 @@ describe("track zones (mirror/flip render zones)", () => {
   });
 });
 
-describe("power-up pool (doubleJump / shield / slowmo)", () => {
+describe("power-up pool (doubleJump / shield / surge)", () => {
   it("gates kinds by level and stays deterministic per seed", () => {
     expect(POWERUP_UNLOCK_LEVEL.doubleJump).toBe(1);
     const kindsSeen = (level: number): Set<string> => {
@@ -1069,7 +1069,7 @@ describe("power-up pool (doubleJump / shield / slowmo)", () => {
     };
     expect(kindsSeen(1)).toEqual(new Set(["doubleJump"]));
     expect(kindsSeen(POWERUP_UNLOCK_LEVEL.shield)).toEqual(new Set(["doubleJump", "shield"]));
-    expect(kindsSeen(POWERUP_UNLOCK_LEVEL.slowmo)).toEqual(new Set(["doubleJump", "shield", "slowmo"]));
+    expect(kindsSeen(POWERUP_UNLOCK_LEVEL.surge)).toEqual(new Set(["doubleJump", "shield", "surge"]));
     expect(makePowerUp(new Rng(7), 800, 20)).toEqual(makePowerUp(new Rng(7), 800, 20));
   });
 
@@ -1081,9 +1081,12 @@ describe("power-up pool (doubleJump / shield / slowmo)", () => {
     }
   });
 
-  it("slow-mo only ever slows the world down", () => {
-    expect(SLOWMO_MUL).toBeLessThan(1);
-    expect(SLOWMO_MUL).toBeGreaterThan(0.5);
+  it("surge speeds the world up, within a fair band", () => {
+    expect(SURGE_MUL).toBeGreaterThan(1);
+    // Stacked with a pad flight this could undercut the leaderboard rules'
+    // duration/4 floor — the sim suspends surge during flights, and the
+    // multiplier itself stays comfortably below the pads' 3.23x.
+    expect(SURGE_MUL).toBeLessThanOrEqual(2);
   });
 });
 

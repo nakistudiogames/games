@@ -1481,12 +1481,10 @@ export interface TrackBoost {
 export const PAD_JUMP_VELOCITY = -1797;
 export const PAD_FLIGHT_SPEED_MUL = 3.23;
 /**
- * The flight is UNTOUCHABLE (pads fire unconditionally, and at 3.23x an
- * involuntary launch into a dense section would otherwise be an unfair
- * death), and touchdown grants a short grace to clear whatever you landed
- * in — the cannon shot is pure reward.
+ * The flight and touchdown are LETHAL like everything else (invincibility
+ * removed 2026-07-21 per user; it used to be untouchable + a 400ms landing
+ * grace) — the one free mid-air jump is the steering/survival tool.
  */
-export const PAD_LANDING_GRACE_MS = 400;
 /** Visual/trigger footprint width per boost kind (px on the track). */
 export const BOOST_FOOTPRINT: Record<BoostKind, number> = { pad: 90, strip: 200 };
 export const DASH_MUL = 1.2;
@@ -1522,7 +1520,7 @@ export function trackBoosts(level: number, lengthPx: number): TrackBoost[] {
 // ---------------------------------------------------------------------------
 // Power-ups: temporary timed abilities collected as floating pickups.
 
-export type PowerUpKind = "doubleJump" | "shield" | "slowmo";
+export type PowerUpKind = "doubleJump" | "shield" | "surge";
 
 export interface PowerUpSpec {
   durationMs: number;
@@ -1535,25 +1533,29 @@ export interface PowerUpSpec {
 export const POWER_UPS: Record<PowerUpKind, PowerUpSpec> = {
   doubleJump: { durationMs: 10_000, label: "DOUBLE JUMP", color: 0xffd54f, glyph: "⇈" },
   shield: { durationMs: 15_000, label: "SHIELD", color: 0x4dd0e1, glyph: "⛨" },
-  slowmo: { durationMs: 6_000, label: "SLOW-MO", color: 0xb388ff, glyph: "⏳" },
+  surge: { durationMs: 6_000, label: "SURGE", color: 0xff6e40, glyph: "≫" },
 };
 
 /** Level at which each power-up kind joins the pickup pool. */
 export const POWERUP_UNLOCK_LEVEL: Record<PowerUpKind, number> = {
   doubleJump: 1,
   shield: 6,
-  slowmo: 16,
+  surge: 16,
 };
 
 /**
- * Simulation-clock multiplier while Slow-Mo is active: the WHOLE world
- * (scroll and jump physics alike) runs at 85% — true bullet-time. Because
- * both scale together, trajectories in px are unchanged, so every
- * clearability guarantee survives. (Scaling only the scroll speed would
- * shrink jump distances and make wide hazards like arcs impassable — the
- * bot playthrough test caught exactly that.)
+ * Simulation-clock multiplier while a Speed Surge is active: the WHOLE
+ * world (scroll and jump physics alike) runs at 1.5x. Because both scale
+ * together, trajectories in px are unchanged, so every clearability
+ * guarantee survives — the risk is purely the player's reaction time, and
+ * the reward is a faster clear on the time leaderboards. (Scaling only the
+ * scroll speed would stretch/shrink jump distances and break wide-hazard
+ * clearability — the bot playthrough test caught exactly that back when
+ * this slot was slow-mo.) NOT applied during pad flights: stacking 1.5x on
+ * the 3.23x flight compression would let total clear times undercut the
+ * duration/4 anti-cheat floor in the Firestore leaderboard rules.
  */
-export const SLOWMO_MUL = 0.85;
+export const SURGE_MUL = 1.5;
 
 export const POWERUP_SIZE = 56;
 

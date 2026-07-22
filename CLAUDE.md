@@ -250,7 +250,7 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    "godMode", "attempts:<n>", "ach:<id>", "sfxMuted",
                    "hapticsOff", stats counters (totalAttempts/totalDeaths/
                    totalClears/totalPlayMs/totalMeters/nearMisses/shieldSaves/
-                   slowmoUses/longNoRevive) ("highScore"/"bestLevel" legacy,
+                   surgeUses/longNoRevive) ("highScore"/"bestLevel" legacy,
                    unused). "BETTER PACK" (2026-07-06): FEEL — instant retry
                    (tap anywhere on death screen, 400ms panic guard,
                    deadButtons hit-test; SPACE too) + scrolling "ATTEMPT N"
@@ -265,9 +265,20 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    newlyEarned() grants + floatBanner toasts w/ depth 120;
                    trophy 🏆 + stats 📊 menu overlays; floatBanner gained a
                    depth param). CONTENT — power-ups now doubleJump/shield/
-                   slowmo (POWERUP_UNLOCK_LEVEL 1/6/16, rng.pick same stream
+                   surge (POWERUP_UNLOCK_LEVEL 1/6/16, rng.pick same stream
                    — NOTE: this re-rolled layouts for levels 6+; shield eats
-                   one death → 800ms invuln, slowmo = SLOWMO_MUL 0.85 speed;
+                   one death → NO invuln window (removed 2026-07-21 per
+                   user): a shieldEscaping flag passes through THE breaking
+                   collision only, lethality re-arms on the first
+                   hazard-free frame (sim mirrors); surge (was slow-mo until
+                   2026-07-21, "boring" per user) = SURGE_MUL 1.5x on simDt
+                   — same dt-scaling doctrine so px trajectories/clearability
+                   unchanged, risk = reaction time, reward = faster clear on
+                   the time leaderboards; SUSPENDED during pad flights so
+                   stacking with the 3.23x flight can't undercut the
+                   Firestore rules' duration/4 min-clear-time floor (sim
+                   mirrors this); ach "timebender"→"surgerider", stat key
+                   "slowmoUses"→"surgeUses";
                    badge column + shieldRing); track boosts (trackBoosts():
                    seeded ^0xb005, pads L6+ launch at PAD_JUMP_VELOCITY 1.25x
                    — suppressed when overheadAhead(), strips L9+ = DASH_MUL
@@ -368,8 +379,8 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    and must finish with ZERO shield saves (~12s, timeout
                    120s). It CAUGHT + forced these fixes: (1) spawning now
                    uses BASE levelSpeed (maybeSpawnPattern(baseSpeed)) so
-                   slow-mo/dash can't change layouts; (2) slow-mo is now true
-                   bullet-time — scales simDt (scroll AND physics) so px
+                   surge/dash can't change layouts; (2) surge (né slow-mo)
+                   scales simDt (scroll AND physics) so px
                    trajectories are unchanged (scaling scroll only made arcs
                    impassable); (3) GATE_GAP_HI 170→240 (old window was
                    mathematically impassable: 72px crossing vs 41px of arc
@@ -378,10 +389,12 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    grounded — vy PAD_JUMP_VELOCITY (-1797) with the world
                    streaming at PAD_FLIGHT_SPEED_MUL 3.23x until touchdown
                    (≈3x the old flight distance on a ~30° flatter
-                   trajectory), UNTOUCHABLE for the whole flight (padFlight
-                   skips checkDeath — mandatory-fire at 3.23x into dense
-                   sections would otherwise be unfair) + PAD_LANDING_GRACE_MS
-                   400 invuln on touchdown + ONE free air jump mid-flight
+                   trajectory), flight + touchdown now FULLY LETHAL
+                   (2026-07-21 per user: removed the untouchable flight and
+                   the PAD_LANDING_GRACE_MS 400 landing invuln — const
+                   deleted; bot re-verified all 100 levels, steering flights
+                   with the air jump; bot suite ~74s now) + ONE free air
+                   jump mid-flight
                    (tryJump allowAir = doubleJumpMs>0 || padFlight, air jump
                    keeps the 3.23x stream until landing); history: overhead-
                    only checks launched pads into walls, a clear-corridor
@@ -488,7 +501,7 @@ npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
 npm test           # vitest (@mg/cloudsave 5 + @mg/leaderboard 6 + 15 + 12
                    # + 9 + 8 + 151 = 206 tests, all green; cube-dash
-                   # includes the ~32s bot playthrough suite)
+                   # includes the ~74s bot playthrough suite)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)
 ```

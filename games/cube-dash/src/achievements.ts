@@ -14,7 +14,7 @@ export interface PlayerStats {
   totalMeters: number;
   nearMisses: number;
   shieldSaves: number;
-  slowmoUses: number;
+  surgeUses: number;
   /** Ever cleared a 45s+ level without using the rewarded revive. */
   longNoRevive: boolean;
 }
@@ -47,7 +47,7 @@ export const ACHIEVEMENTS: readonly Achievement[] = [
   { id: "marathon", name: "Marathoner", desc: "Clear a 45s+ level without a revive", check: (s) => s.longNoRevive },
   { id: "daredevil", name: "Daredevil", desc: "Survive 100 near-misses", check: (s) => s.nearMisses >= 100 },
   { id: "guardian", name: "Guardian Angel", desc: "Let a shield absorb a hit", check: (s) => s.shieldSaves >= 1 },
-  { id: "timebender", name: "Time Bender", desc: "Pick up a Slow-Mo", check: (s) => s.slowmoUses >= 1 },
+  { id: "surgerider", name: "Surge Rider", desc: "Pick up a Speed Surge", check: (s) => s.surgeUses >= 1 },
   { id: "traveler", name: "World Traveler", desc: "Run 10,000m in total", check: (s) => s.totalMeters >= 10_000 },
 ];
 
@@ -63,7 +63,7 @@ export function collectStats(storage: GameStorage): PlayerStats {
     totalMeters: storage.get("totalMeters", 0),
     nearMisses: storage.get("nearMisses", 0),
     shieldSaves: storage.get("shieldSaves", 0),
-    slowmoUses: storage.get("slowmoUses", 0),
+    surgeUses: storage.get("surgeUses", 0),
     longNoRevive: storage.get("longNoRevive", false),
   };
 }
