@@ -168,64 +168,92 @@ export function buildCharacterParts(
 ): Phaser.GameObjects.GameObject[] {
   const parts: Phaser.GameObjects.GameObject[] = [];
 
+  // Flat neon-arcade look: bold sharp silhouette, a hard cel top-light
+  // band, a bright neon inner rim, and a thin outer glow — no soft gradients.
   if (spec.shape === "cube") {
-    parts.push(scene.add.rectangle(0, 0, s, s, spec.color).setStrokeStyle(5, spec.dark));
-    // Bevel: lit top/left, shaded bottom/right — light from the top-left.
-    parts.push(scene.add.rectangle(0, -s / 2 + 7, s - 12, 5, spec.light));
-    parts.push(scene.add.rectangle(-s / 2 + 7, 0, 5, s - 12, spec.light));
-    parts.push(scene.add.rectangle(0, s / 2 - 7, s - 12, 5, spec.dark));
-    parts.push(scene.add.rectangle(s / 2 - 7, 0, 5, s - 12, spec.dark));
-    parts.push(scene.add.rectangle(0, 0, s - 26, s - 26, spec.face));
-    // Glass sheen across the upper-left, ambient occlusion pooling at the
-    // bottom — the face reads as a curved, lit surface instead of a sticker.
-    const sheen = scene.add.graphics();
-    sheen.fillStyle(0xffffff, 0.12);
-    sheen.fillTriangle(-s / 2 + 5, -s / 2 + 5, s / 2 - 9, -s / 2 + 5, -s / 2 + 5, s / 2 - 9);
-    parts.push(sheen);
-    parts.push(scene.add.rectangle(0, s / 2 - 11, s - 14, 6, 0x000000, 0.22));
+    const half = s / 2;
+    const g = scene.add.graphics();
+    g.fillStyle(spec.light, 0.1);
+    g.fillRect(-half - 4, -half - 4, s + 8, s + 8); // outer glow bloom
+    g.fillStyle(spec.dark, 1);
+    g.fillRect(-half, -half, s, s); // bold frame
+    g.fillStyle(spec.color, 1);
+    g.fillRect(-half + 5, -half + 5, s - 10, s - 10); // flat body
+    g.fillStyle(spec.light, 1);
+    g.fillRect(-half + 5, -half + 5, s - 10, (s - 10) * 0.34); // cel top-light
+    g.lineStyle(2, spec.light, 0.95);
+    g.strokeRect(-half + 4, -half + 4, s - 8, s - 8); // neon inner rim
+    parts.push(g);
   } else if (spec.shape === "ball") {
-    parts.push(scene.add.circle(0, 0, s / 2, spec.color).setStrokeStyle(5, spec.dark));
-    // Sphere shading: shadowed underside ring, lit face offset toward the
-    // light, then a two-step specular (broad + hot core).
-    parts.push(scene.add.circle(3, 3, s / 2 - 7, spec.dark, 0.55));
-    parts.push(scene.add.circle(-2, -2, s / 2 - 12, spec.face));
-    parts.push(scene.add.circle(-s / 5, -s / 5, s / 7, 0xffffff, 0.5));
-    parts.push(scene.add.circle(-s / 4.4, -s / 4.4, s / 16, 0xffffff, 0.9));
+    const r = s / 2;
+    const g = scene.add.graphics();
+    g.fillStyle(spec.light, 0.1);
+    g.fillCircle(0, 0, r + 4); // glow bloom
+    g.fillStyle(spec.dark, 1);
+    g.fillCircle(0, 0, r); // frame
+    g.fillStyle(spec.color, 1);
+    g.fillCircle(0, 0, r - 4); // body
+    g.fillStyle(spec.light, 1);
+    g.slice(0, 0, r - 4, Phaser.Math.DegToRad(180), Phaser.Math.DegToRad(360)); // hard top-light
+    g.fillPath();
+    g.lineStyle(2, spec.light, 0.95);
+    g.strokeCircle(0, 0, r - 4); // neon rim
+    parts.push(g);
   } else {
-    // diamond: rotated squares, bounding box ≈ the player box.
-    const d = s * 0.78;
-    parts.push(
-      scene.add.rectangle(0, 0, d, d, spec.color).setStrokeStyle(5, spec.dark).setAngle(45),
-    );
-    parts.push(scene.add.rectangle(0, 0, d - 20, d - 20, spec.face).setAngle(45));
-    // Cut-gem facets: shaded right half, lit upper-left wedge.
-    const facetR = ((d - 20) * Math.SQRT2) / 2;
-    const facets = scene.add.graphics();
-    facets.fillStyle(spec.dark, 0.3);
-    facets.fillTriangle(0, -facetR, facetR, 0, 0, facetR);
-    facets.fillStyle(0xffffff, 0.14);
-    facets.fillTriangle(0, -facetR, -facetR, 0, 0, 0);
-    parts.push(facets);
-    parts.push(scene.add.rectangle(0, -d / 2 + 4, 10, 10, spec.light).setAngle(45));
+    // diamond: same neon language on a rotated square.
+    const d = s * 0.8;
+    const g = scene.add.graphics();
+    g.fillStyle(spec.dark, 1);
+    g.fillRect(-d / 2, -d / 2, d, d);
+    g.fillStyle(spec.color, 1);
+    g.fillRect(-d / 2 + 4, -d / 2 + 4, d - 8, d - 8);
+    g.fillStyle(spec.light, 1);
+    g.fillRect(-d / 2 + 4, -d / 2 + 4, d - 8, (d - 8) * 0.34);
+    g.lineStyle(2, spec.light, 0.95);
+    g.strokeRect(-d / 2 + 3, -d / 2 + 3, d - 6, d - 6);
+    parts.push(scene.add.container(0, 0, [g]).setAngle(45));
   }
 
-  // Face
-  const eyeL = scene.add.rectangle(-9, -6, 9, 14, 0x0a1518);
-  const eyeR = scene.add.rectangle(11, -6, 9, 14, 0x0a1518);
+  parts.push(...buildFace(scene, spec));
+  return parts;
+}
+
+/**
+ * Sleek arcade face: bold ink eyes with a bright color-matched energy glint
+ * (not glossy cartoon eyes) + a minimal confident mouth. Mood via eye tilt.
+ */
+function buildFace(scene: Phaser.Scene, spec: CharacterSpec): Phaser.GameObjects.GameObject[] {
+  const parts: Phaser.GameObjects.GameObject[] = [];
+  const ink = 0x0a1518;
+  const glow = spec.light;
+
+  const eye = (cx: number, angle: number): Phaser.GameObjects.Graphics => {
+    const e = scene.add.graphics();
+    e.fillStyle(ink, 1);
+    e.fillRoundedRect(-5, -9, 10, 18, 3); // tall bold eye
+    e.fillStyle(glow, 1);
+    e.fillRoundedRect(-3, -1, 6, 8, 2); // glowing color core, low in the eye
+    e.fillStyle(0xffffff, 0.85);
+    e.fillRect(-3, 5, 6, 2); // bright base line — the "focus" glint
+    e.setPosition(cx, -5);
+    if (angle !== 0) e.setAngle(angle);
+    return e;
+  };
+
   if (spec.mouth === "angry") {
-    eyeL.setAngle(-18);
-    eyeR.setAngle(18);
-    parts.push(eyeL, eyeR, scene.add.rectangle(1, 13, 26, 5, 0x0a1518));
+    parts.push(eye(-10, -20), eye(10, 20));
+    parts.push(scene.add.rectangle(1, 15, 20, 4, ink)); // set jaw
   } else if (spec.mouth === "zap") {
-    parts.push(
-      eyeL,
-      eyeR,
-      scene.add
-        .text(1, 13, "⚡", { fontSize: "20px" })
-        .setOrigin(0.5),
-    );
+    parts.push(eye(-10, 0), eye(10, 0));
+    parts.push(scene.add.text(1, 14, "⚡", { fontSize: "18px" }).setOrigin(0.5));
   } else {
-    parts.push(eyeL, eyeR, scene.add.rectangle(1, 12, 22, 6, 0x0a1518));
+    parts.push(eye(-10, 0), eye(10, 0));
+    const smile = scene.add.graphics();
+    smile.lineStyle(4, ink, 1);
+    smile.beginPath();
+    smile.arc(1, 9, 9, Math.PI * 0.18, Math.PI * 0.82);
+    smile.strokePath();
+    parts.push(smile);
   }
   return parts;
 }

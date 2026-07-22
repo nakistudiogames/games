@@ -432,7 +432,14 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    (unlockedLevel bump + bestPct) so toggling off restores
                    real progress untouched. Characters:
                    cosmetic skins in src/characters.ts (pure data/rules,
-                   tested) + characterView.ts (Phaser drawing, shared by game
+                   tested) + characterView.ts (Phaser drawing — FLAT NEON
+                   ARCADE look 2026-07-21 after a glossy attempt was
+                   rejected: bold sharp silhouette + dark frame + flat body
+                   + hard cel top-light band (ball uses Graphics.slice for a
+                   top semicircle) + bright neon inner rim stroke + faint
+                   outer glow bloom; sleek buildFace() = bold ink eyes with a
+                   color-matched glowing core + white focus glint (no glossy
+                   catchlights) + minimal mouth, mood via eye tilt; shared by game
                    and menu preview) — 21 SKINS, ONE PER WORLD (2026-07-21):
                    dash = world-0 starter; every world's CLEAR unlocks its
                    themed skin (minLevel = world*5+1, spec has `world` field,
