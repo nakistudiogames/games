@@ -140,7 +140,8 @@ export class LevelSim {
       this.padFlight = false;
     }
 
-    if (this.lengthPx - this.distancePx <= 40) {
+    // Full crossing (remaining 0) — mirrors GameScene's finish trigger.
+    if (this.lengthPx - this.distancePx <= 0) {
       this.finished = true;
       return;
     }

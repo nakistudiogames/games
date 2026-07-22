@@ -229,7 +229,10 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    per world (sil-<id>, ground-<id>); music.ts caches one
                    MusicPlayer per world (musicForLevel/stopAllMusic). HUD
                    run timer next to the % (elapsed active-play time, shown
-                   on the complete screen too). Pause: ESC or ⏸ HUD button →
+                   on the complete screen too; finish triggers at remaining
+                   <= 0 = cube FULLY past the pole — was <= 40, which
+                   stopped the clock ~0.1s early, fixed 2026-07-21; sim
+                   mirrors). Pause: ESC or ⏸ HUD button →
                    overlay w/ resume/restart/menu; auto-pauses on Phaser
                    HIDDEN/BLUR (covers Capacitor app-backgrounding via
                    visibilitychange); 200ms resume guard swallows the RESUME

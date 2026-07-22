@@ -877,7 +877,9 @@ export class GameScene extends Phaser.Scene {
     this.bgm.setVoiceGain("hat", prog >= 0.33 ? 1 : 0);
     this.bgm.setVoiceGain("lead", prog >= 0.66 ? 1 : prog >= 0.33 ? 0.85 : 0.6);
 
-    if (this.remainingPx() <= 40) {
+    // Complete only when the cube is FULLY past the pole (remaining 0) —
+    // the old 40px-early trigger stopped the clock ~0.1s short of the line.
+    if (this.remainingPx() <= 0) {
       this.completeLevel();
       return;
     }
