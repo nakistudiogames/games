@@ -48,7 +48,7 @@ export class GameScene extends Phaser.Scene {
   private streak = 0;
   private streakText!: Phaser.GameObjects.Text;
   private hintText!: Phaser.GameObjects.Text;
-  private hintButton: Phaser.GameObjects.Text | null = null;
+  private hintButton: Phaser.GameObjects.Container | null = null;
   private usedHint = false;
   private locked = false;
 

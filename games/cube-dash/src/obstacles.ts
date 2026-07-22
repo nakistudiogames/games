@@ -1,4 +1,4 @@
-import type { ObstacleKind } from "./logic/runner";
+import type { BoostKind, ObstacleKind, PowerUpKind, TrackZoneKind } from "./logic/runner";
 
 /**
  * Encyclopedia entries — pure data, no Phaser (drawing lives in
@@ -48,5 +48,135 @@ export const OBSTACLE_INFO: Record<ObstacleKind, ObstacleInfo> = {
   arc: {
     name: "Tesla Arc",
     blurb: "A wide, low lightning span with nothing safe inside. One full-commitment jump, no hesitation.",
+  },
+  phantom: {
+    name: "Phantom Shard",
+    blurb: "A crystal that phases between solid and ghost. Walk through the shimmer — jump it when it hardens.",
+  },
+  vine: {
+    name: "Lashing Vine",
+    blurb: "Its reach rises and falls as you approach. Time your jump for the dip, or clear it at full stretch.",
+  },
+  gear: {
+    name: "Rogue Gear",
+    blurb: "A cog that patrols back and forth along the track. Jump the whole patrol path, not just the cog.",
+  },
+  gate: {
+    name: "Storm Gate",
+    blurb: "Twin energy bars with a gap between. Don't jump over — thread the jump THROUGH the window.",
+  },
+  crusher: {
+    name: "Crusher Slab",
+    blurb: "A toothed slab bobbing over the track. Duck under it when it rides high, hop it when it slams low.",
+  },
+  urchin: {
+    name: "Reef Urchin",
+    blurb: "A spiked ball floating at head height. Too low to run under — commit to a clean, high jump.",
+  },
+  talon: {
+    name: "Grave Talon",
+    blurb: "Watch the cracked mound: claws erupt on a rhythm. Cross in the lull, or leap the outstretched bones.",
+  },
+  drone: {
+    name: "Sentry Drone",
+    blurb: "It drifts and hovers but never dips low — hold your nerve and run straight underneath.",
+  },
+  obelisk: {
+    name: "Obsidian Monolith",
+    blurb: "The tallest solid on any track. A late, maximum-height jump clears it — barely.",
+  },
+  flare: {
+    name: "Solar Flare",
+    blurb: "A long ribbon of fire hugging the ground. The widest jump in the game — take off at the very edge.",
+  },
+  comet: {
+    name: "Comet Fall",
+    blurb: "It streaks down from the sky ahead of you and lands on the track. Treat the landed rock as a hurdle.",
+  },
+  reaper: {
+    name: "Chrome Reaper",
+    blurb: "A scythe that sweeps the track in pulses. The post never moves — the blade decides your timing.",
+  },
+  // ---- Air hazards (one new per 10 levels): deadly to jump into, always
+  // safe to run under — keep your feet on the ground.
+  halo: {
+    name: "Sky Halo",
+    blurb: "A golden ring hanging exactly where your jump would take you. Stay grounded and stroll straight under it.",
+  },
+  wisp: {
+    name: "Restless Wisp",
+    blurb: "A spirit orb drifting up and down in the jump lane. However it bobs, the path beneath it is always open.",
+  },
+  lance: {
+    name: "Sky Lance",
+    blurb: "A long spear floating high and flat. Too wide to hop over — duck your instincts and run the full length below it.",
+  },
+  swarm: {
+    name: "Crimson Swarm",
+    blurb: "Three barbed orbs stacked up the arc of your jump. There is no lane over the top — walk under the whole ladder.",
+  },
+  flux: {
+    name: "Flux Net",
+    blurb: "An energy mesh that charges and discharges. Charged or not, jumping in is a mistake — the floor lane is always safe.",
+  },
+  pendul: {
+    name: "Dread Pendulum",
+    blurb: "A spiked orb sweeping side to side at head height. Watch the swing if you like, but the answer is always: run under.",
+  },
+  rails: {
+    name: "Twin Rails",
+    blurb: "Two stacked energy bars. A jump threads you straight into one of them — the gap under the lower rail is the only way.",
+  },
+  cyclone: {
+    name: "Teal Cyclone",
+    blurb: "A spinning funnel that sways in the air. Its whole column is off-limits; the ground beneath it never is.",
+  },
+  specter: {
+    name: "Pale Specter",
+    blurb: "A ghost that fades between solid and mist. Don't gamble on its mood mid-air — pass beneath and keep moving.",
+  },
+  nova: {
+    name: "Violet Nova",
+    blurb: "A blazing core with a satellite whipping around it. The orbit owns the air — the track below stays clear.",
+  },
+};
+
+// The guide also covers the friendly side of the track. Same Record trick:
+// the compiler demands an entry for every kind, tests reject empty ones.
+
+export const POWERUP_INFO: Record<PowerUpKind, ObstacleInfo> = {
+  doubleJump: {
+    name: "Double Jump",
+    blurb: "Ten seconds of one extra jump in mid-air, recharged every time you land. Save it for the layered stuff.",
+  },
+  shield: {
+    name: "Shield",
+    blurb: "For fifteen seconds, one fatal hit shatters the shield instead of you — then you just keep running.",
+  },
+  surge: {
+    name: "Speed Surge",
+    blurb: "The whole world runs at 150% for six seconds. Same jumps, less thinking time — and a faster clear on the clock.",
+  },
+};
+
+export const BOOST_INFO: Record<BoostKind, ObstacleInfo> = {
+  pad: {
+    name: "Launch Pad",
+    blurb: "A cannon shot: run over it and you're airborne — untouchable, three times the distance, with one mid-air jump to extend the ride.",
+  },
+  strip: {
+    name: "Dash Strip",
+    blurb: "A burst of speed for the next stretch — your jumps carry further while the rush lasts.",
+  },
+};
+
+export const ZONE_INFO: Record<TrackZoneKind, ObstacleInfo> = {
+  mirror: {
+    name: "Mirror Gate",
+    blurb: "Between these pillars the view flips and you run the other way. The track itself never changes — trust your timing.",
+  },
+  flip: {
+    name: "Gravity Gate",
+    blurb: "Between these pillars gravity inverts: you run the ceiling and jump downward until the exit gate.",
   },
 };

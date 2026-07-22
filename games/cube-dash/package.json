@@ -12,7 +12,10 @@
   },
   "dependencies": {
     "@mg/ads": "*",
+    "@mg/cloudsave": "*",
     "@mg/core": "*",
+    "@mg/firebase": "*",
+    "@mg/leaderboard": "*",
     "@mg/ui": "*",
     "phaser": "^3.87.0"
   },

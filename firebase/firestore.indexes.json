@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "overall",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "highestLevel", "order": "DESCENDING" },
+        { "fieldPath": "totalTimeMs", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

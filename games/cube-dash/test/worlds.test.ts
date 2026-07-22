@@ -12,8 +12,8 @@ describe("worlds", () => {
     expect(LEVELS_PER_WORLD).toBe(5);
   });
 
-  it("maps levels 1-40 onto the eight worlds, then cycles", () => {
-    expect(WORLDS).toHaveLength(8);
+  it("maps levels 1-100 onto the twenty worlds, then cycles", () => {
+    expect(WORLDS).toHaveLength(20);
     expect(worldForLevel(1).id).toBe("city");
     expect(worldForLevel(6).id).toBe("caves");
     expect(worldForLevel(11).id).toBe("magma");
@@ -22,8 +22,20 @@ describe("worlds", () => {
     expect(worldForLevel(26).id).toBe("dunes");
     expect(worldForLevel(31).id).toBe("abyss");
     expect(worldForLevel(36).id).toBe("aurora");
-    expect(worldForLevel(40).id).toBe("aurora");
-    expect(worldForLevel(41).id).toBe("city"); // wraps around
+    expect(worldForLevel(41).id).toBe("mirage");
+    expect(worldForLevel(46).id).toBe("grid");
+    expect(worldForLevel(51).id).toBe("foundry");
+    expect(worldForLevel(56).id).toBe("storm");
+    expect(worldForLevel(61).id).toBe("citadel");
+    expect(worldForLevel(66).id).toBe("coral");
+    expect(worldForLevel(71).id).toBe("bones");
+    expect(worldForLevel(76).id).toBe("vault");
+    expect(worldForLevel(81).id).toBe("obsidian");
+    expect(worldForLevel(86).id).toBe("forge");
+    expect(worldForLevel(91).id).toBe("nebula");
+    expect(worldForLevel(96).id).toBe("apex");
+    expect(worldForLevel(100).id).toBe("apex");
+    expect(worldForLevel(101).id).toBe("city"); // wraps around
   });
 
   it("has unique ids, unique silhouettes, and complete 16-step music patterns", () => {

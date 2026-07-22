@@ -1,37 +1,87 @@
 import Phaser from "phaser";
-import { Rng, sfx } from "@mg/core";
+import { Rng, haptics, sfx } from "@mg/core";
 import type { MusicPlayer } from "@mg/core";
 import { floatBanner, textButton } from "@mg/ui";
 import {
+  BOOST_FOOTPRINT,
+  DASH_LENGTH_PX,
+  DASH_MUL,
   GROUND_Y,
+  KINDS_WITH_PHASE,
+  MIRROR_MIN_LEVEL,
+  PAD_FLIGHT_SPEED_MUL,
+  PAD_JUMP_VELOCITY,
+  SURGE_MUL,
   PLAYER_SIZE,
   PLAYER_X,
   POWER_UPS,
   checkDeath,
   collectsPowerUp,
+  cometElev,
+  cutJump,
+  crusherElev,
+  cycloneSway,
+  droneElev,
+  droneShift,
+  fluxOn,
+  gearShift,
   geyserActive,
+  isFinaleLevel,
   jump,
   levelColor,
+  levelDurationSec,
   levelGapScale,
   levelLengthM,
   levelSeed,
   levelSpeed,
   makePowerUp,
   minGapPx,
+  nearMiss,
+  novaSatPos,
+  pendulShift,
+  phantomSolid,
   pickPattern,
   powerUpGapPx,
+  reaperActive,
+  specterSolid,
   stepRunner,
   supportAt,
   swingElev,
+  talonActive,
   tentacleSway,
+  wispElev,
+  trackBoosts,
+  trackZones,
   tryJump,
+  vineHeight,
+  zoneKindAt,
 } from "../logic/runner";
-import type { Obstacle, ObstacleKind, PowerUp, Runner } from "../logic/runner";
+import type {
+  Obstacle,
+  ObstacleKind,
+  PowerUp,
+  Runner,
+  TrackBoost,
+  TrackZone,
+  TrackZoneKind,
+} from "../logic/runner";
 import { adsReady } from "../ads";
+import { newlyEarned } from "../achievements";
+import { leaderboard } from "../leaderboard";
+import { saves } from "../account";
 import { characterById } from "../characters";
-import { attachAura, buildCharacterParts } from "../characterView";
+import { TRAIL_AIR_BOOST, attachAura, buildCharacterParts, buildCharacterTrail } from "../characterView";
 import { musicForLevel, stopAllMusic } from "../music";
 import { drawObstacle } from "../obstacleView";
+import {
+  BOOST_PREVIEW,
+  ZONE_COLORS,
+  ZONE_GATE_SIZE,
+  buildBoostView,
+  buildPickupView,
+  buildZoneGateView,
+} from "../trackView";
+import { ensureWorldTextures } from "../worldView";
 import { worldForLevel } from "../worlds";
 import type { WorldTheme } from "../worlds";
 import { godModeOn, storage } from "./MenuScene";
@@ -47,10 +97,16 @@ const JUMP_BUFFER_MS = 110;
 const FIRST_POWERUP_PX = 1500;
 /** No obstacles/pickups spawn once the finish is closer than this. */
 const CLEAR_RUNWAY_PX = 1200;
+/** Vertical mirror line for gravity-flip zones: ground 1000 ↔ ceiling 320. */
+const FLIP_PIVOT_Y = 660;
 
 interface ObstacleView {
   obs: Obstacle;
   view: Phaser.GameObjects.Container;
+  /** Player entered this obstacle's graze band without dying. */
+  grazed?: boolean;
+  /** Near-miss celebration already paid out for this obstacle. */
+  rewarded?: boolean;
 }
 
 interface PowerUpView {
@@ -80,11 +136,40 @@ export class GameScene extends Phaser.Scene {
   private obstacles: ObstacleView[] = [];
   private powerUps: PowerUpView[] = [];
   private finishView: Phaser.GameObjects.Container | null = null;
+  /**
+   * Everything that scrolls with the track lives in this container. Mirror
+   * and flip zones are ONE transform on it (scaleX/scaleY = -1) — physics
+   * and layouts never change, only how they're presented.
+   */
+  private trackLayer!: Phaser.GameObjects.Container;
+  /** Scenery (sky/stars/silhouettes/haze) — mirrors/flips with the zones. */
+  private bgLayer!: Phaser.GameObjects.Container;
+  /** Sub-container for spawned views (obstacles/pickups/finish/gates). */
+  private trackObjects!: Phaser.GameObjects.Container;
+  private zones: TrackZone[] = [];
+  private activeZone: TrackZoneKind | null = null;
+  private zoneGates: Array<{ at: number; view: Phaser.GameObjects.Container }> = [];
+  private attemptText: Phaser.GameObjects.Text | null = null;
+  private squashTween: Phaser.Tweens.Tween | null = null;
+  private shieldMs = 0;
+  /** Post-shield-save pass-through: true only while still inside the hit. */
+  private shieldEscaping = false;
+  private surgeMs = 0;
+  private shieldRing!: Phaser.GameObjects.Arc;
+  private boosts: Array<{ b: TrackBoost; view: Phaser.GameObjects.Container; used: boolean }> = [];
+  /** Dash-strip effect runs until distancePx crosses this. */
+  private dashUntilPx = -1;
+  /** Mid-pad-launch: world streams at PAD_FLIGHT_SPEED_MUL, one free air jump. */
+  private padFlight = false;
+  /** Buttons on the death overlay — taps anywhere else instantly retry. */
+  private deadButtons: Phaser.GameObjects.Container[] = [];
+  private retryReadyAt = 0;
   private rng!: Rng;
   private phase: Phase = "ready";
   private distancePx = 0;
   private scoreText!: Phaser.GameObjects.Text;
   private timerText!: Phaser.GameObjects.Text;
+  private metersText!: Phaser.GameObjects.Text;
   private elapsedMs = 0;
   private levelText!: Phaser.GameObjects.Text;
   private powerBadge!: Phaser.GameObjects.Text;
@@ -127,20 +212,77 @@ export class GameScene extends Phaser.Scene {
     this.jumpBufferMs = 0;
     this.doubleJumpMs = 0;
     this.nextPowerUpAt = FIRST_POWERUP_PX;
+    this.zones = this.levelNum >= MIRROR_MIN_LEVEL ? trackZones(this.levelNum, this.levelLengthPx) : [];
+    this.activeZone = null;
+    this.zoneGates = [];
+
+    this.deadButtons = [];
+    this.retryReadyAt = 0;
+    this.squashTween = null;
+    this.shieldMs = 0;
+    this.shieldEscaping = false;
+    this.surgeMs = 0;
+    this.boosts = [];
+    this.dashUntilPx = -1;
+    this.padFlight = false;
+
+    sfx.setMuted(storage.get("sfxMuted", false));
+    haptics.setEnabled(!storage.get("hapticsOff", false));
+
+    // Attempt bookkeeping (GD-style): every run of a level counts.
+    const attempts = storage.get(`attempts:${this.levelNum}`, 0) + 1;
+    storage.set(`attempts:${this.levelNum}`, attempts);
+    storage.set("totalAttempts", storage.get("totalAttempts", 0) + 1);
 
     this.ensureTextures();
+    // The track layer sits above the scenery and below the HUD (20+);
+    // children render in add order, so build order = draw order. The
+    // scenery gets its own layer so zone mirror/flip carries it too.
+    this.bgLayer = this.add.container(0, 0).setDepth(0);
+    this.trackLayer = this.add.container(0, 0).setDepth(4);
     this.buildBackground();
     this.buildPlayer();
+    this.buildZoneGates();
+    this.buildBoosts();
     this.buildHud();
 
+    // "ATTEMPT N" tag sits on the track and scrolls away with it (the
+    // TAP TO START block lives higher up, clear of it).
+    this.attemptText = this.add
+      .text(WORLD_WIDTH / 2, GROUND_Y - 320, `ATTEMPT ${attempts}`, {
+        fontFamily: "Arial Black, sans-serif",
+        fontSize: "56px",
+        color: this.levelColorHex(this.levelNum),
+      })
+      .setOrigin(0.5)
+      .setAlpha(0.85)
+      .setShadow(0, 5, "#000000", 6, false, true);
+    this.trackObjects.add(this.attemptText);
+
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
+      if (this.phase === "dead") {
+        this.tryInstantRetry(p);
+        return;
+      }
       if (this.muteButton.getBounds().contains(p.x, p.y)) return;
       if (this.pauseButton.getBounds().contains(p.x, p.y)) return;
       this.onTap();
     });
-    this.input.keyboard?.on("keydown-SPACE", () => this.onTap());
+    this.input.keyboard?.on("keydown-SPACE", () => {
+      if (this.phase === "dead") this.tryInstantRetry(null);
+      else this.onTap();
+    });
     this.input.keyboard?.on("keydown-UP", () => this.onTap());
     this.input.keyboard?.on("keydown-ESC", () => this.togglePause());
+    // Jump sensitivity: releasing while still rising shortens the arc
+    // (tap = hop, hold = full jump). Buffered/coyote jumps whose press was
+    // already released stay full-height — forgiving by design.
+    const release = (): void => {
+      if (this.phase === "playing") cutJump(this.runner);
+    };
+    this.input.on("pointerup", release);
+    this.input.keyboard?.on("keyup-SPACE", release);
+    this.input.keyboard?.on("keyup-UP", release);
 
     // Auto-pause when the app is backgrounded or the window loses focus.
     // Phaser's HIDDEN maps to visibilitychange, which Capacitor WebViews also
@@ -159,6 +301,26 @@ export class GameScene extends Phaser.Scene {
   private togglePause(): void {
     if (this.phase === "playing") this.pauseGame();
     else if (this.phase === "paused") this.resumeGame();
+  }
+
+  /** Tap anywhere (but a button) on the death screen = instant restart. */
+  private tryInstantRetry(p: Phaser.Input.Pointer | null): void {
+    if (this.time.now < this.retryReadyAt) return; // swallow the death-mash
+    if (p && this.deadButtons.some((b) => b.getBounds().contains(p.x, p.y))) return;
+    this.scene.restart({ level: this.levelNum });
+  }
+
+  /** Squash/stretch punch on the player body; resolves back to 1:1. */
+  private punchScale(sx: number, sy: number): void {
+    this.squashTween?.stop();
+    this.playerView.setScale(sx, sy);
+    this.squashTween = this.tweens.add({
+      targets: this.playerView,
+      scaleX: 1,
+      scaleY: 1,
+      duration: 130,
+      ease: "Back.easeOut",
+    });
   }
 
   private pauseGame(): void {
@@ -223,6 +385,24 @@ export class GameScene extends Phaser.Scene {
         "44px",
       ),
     );
+    const sfxMuted = storage.get("sfxMuted", false);
+    overlay.add(
+      textButton(
+        this,
+        width / 2,
+        height * 0.83,
+        sfxMuted ? "🔇  SFX OFF" : "🔊  SFX ON",
+        { text: sfxMuted ? "#5c667d" : "#8a93a8", background: "#181d2b" },
+        () => {
+          storage.set("sfxMuted", !sfxMuted);
+          sfx.setMuted(!sfxMuted);
+          // Rebuild the overlay so the label reflects the new state.
+          this.pauseOverlay?.destroy();
+          this.pauseGame();
+        },
+        "36px",
+      ),
+    );
     this.pauseOverlay = overlay;
   }
 
@@ -269,106 +449,7 @@ export class GameScene extends Phaser.Scene {
       g.generateTexture("stars", 160, 160);
       g.destroy();
     }
-    // World-specific silhouette (city buildings / crystal shards / rocks).
-    const silKey = `sil-${this.world.id}`;
-    if (!this.textures.exists(silKey)) {
-      const g = this.make.graphics({ x: 0, y: 0 }, false);
-      if (this.world.silhouette === "city") {
-        const buildings: Array<[number, number, number]> = [
-          [0, 70, 190], [80, 60, 260], [150, 90, 140], [250, 70, 300], [330, 55, 210],
-        ];
-        for (const [x, w, h] of buildings) {
-          g.fillStyle(this.world.silDark, 1);
-          g.fillRect(x, 320 - h, w, h);
-          g.fillStyle(this.world.silLight, 1);
-          g.fillRect(x, 320 - h, w, 6);
-        }
-      } else if (this.world.silhouette === "crystals") {
-        const shards: Array<[number, number, number]> = [
-          [0, 70, 220], [50, 50, 300], [110, 80, 170], [180, 55, 260], [240, 90, 200],
-          [310, 60, 310], [360, 50, 150],
-        ];
-        for (const [x, w, h] of shards) {
-          g.fillStyle(this.world.silDark, 1);
-          g.fillTriangle(x, 320, x + w / 2, 320 - h, x + w, 320);
-          g.fillStyle(this.world.silLight, 0.8);
-          g.fillTriangle(x + w / 2, 320 - h, x + w / 2 + 8, 320 - h + 40, x + w / 2 - 8, 320 - h + 40);
-        }
-      } else if (this.world.silhouette === "peaks") {
-        const peaks: Array<[number, number, number]> = [
-          [0, 130, 230], [90, 150, 300], [210, 120, 200], [280, 140, 280], [370, 90, 170],
-        ];
-        for (const [x, w, h] of peaks) {
-          g.fillStyle(this.world.silDark, 1);
-          g.fillTriangle(x, 320, x + w * 0.5, 320 - h, x + w, 320);
-          // Snow cap hugging the summit.
-          g.fillStyle(this.world.silLight, 0.9);
-          g.fillTriangle(x + w * 0.5, 320 - h, x + w * 0.62, 320 - h * 0.82, x + w * 0.38, 320 - h * 0.82);
-        }
-      } else if (this.world.silhouette === "mushrooms") {
-        const shrooms: Array<[number, number, number]> = [
-          [10, 90, 180], [110, 130, 260], [230, 80, 150], [290, 120, 230],
-        ];
-        for (const [x, capW, h] of shrooms) {
-          const cx = x + capW / 2;
-          g.fillStyle(this.world.silDark, 1);
-          g.fillRect(cx - capW * 0.175, 320 - h, capW * 0.35, h); // stalk
-          g.fillEllipse(cx, 320 - h, capW, capW * 0.55); // cap
-          g.fillStyle(this.world.silLight, 0.8);
-          g.fillEllipse(cx, 320 - h - capW * 0.08, capW * 0.6, capW * 0.2);
-        }
-      } else if (this.world.silhouette === "ruins") {
-        const ruins: Array<[number, number]> = [
-          [0, 150], [140, 200], [320, 130],
-        ];
-        const tierH = 46;
-        for (const [x, baseW] of ruins) {
-          const tiers = Math.round(baseW / 44);
-          for (let t = 0; t < tiers; t++) {
-            const w = baseW * (1 - t * 0.18);
-            const cx = x + baseW / 2;
-            g.fillStyle(this.world.silDark, 1);
-            g.fillRect(cx - w / 2, 320 - tierH * (t + 1), w, tierH);
-            g.fillStyle(this.world.silLight, 0.7);
-            g.fillRect(cx - w / 2, 320 - tierH * (t + 1), w, 4);
-          }
-        }
-      } else if (this.world.silhouette === "tendrils") {
-        const tendrils: Array<[number, number, number, number]> = [
-          [10, 34, 240, 40], [80, 26, 300, -30], [150, 40, 200, 25], [230, 30, 310, -45],
-          [300, 36, 250, 35], [365, 24, 180, -20],
-        ];
-        for (const [x, w, h, lean] of tendrils) {
-          g.fillStyle(this.world.silDark, 1);
-          g.fillTriangle(x, 320, x + w / 2 + lean, 320 - h, x + w, 320);
-          g.fillStyle(this.world.silLight, 0.5);
-          g.fillTriangle(x + w * 0.3, 320, x + w / 2 + lean, 320 - h * 0.9, x + w * 0.55, 320);
-        }
-      } else if (this.world.silhouette === "spires") {
-        const spires: Array<[number, number, number]> = [
-          [10, 44, 210], [80, 60, 250], [170, 40, 170], [230, 70, 240], [330, 50, 220],
-        ];
-        for (const [x, w, h] of spires) {
-          g.fillStyle(this.world.silDark, 1);
-          g.fillRect(x, 320 - h, w, h);
-          g.fillTriangle(x, 320 - h, x + w / 2, 320 - h - w, x + w, 320 - h); // pointed tip
-          g.fillStyle(this.world.silLight, 0.8);
-          g.fillRect(x + w / 2 - 2, 320 - h, 4, h); // lit spine
-        }
-      } else {
-        const rocks: Array<[number, number, number]> = [
-          [0, 160, 140], [100, 190, 210], [240, 170, 160], [320, 160, 120],
-        ];
-        for (const [x, w, h] of rocks) {
-          g.fillStyle(this.world.silDark, 1);
-          g.fillTriangle(x, 320, x + w * 0.45, 320 - h, x + w, 320);
-          g.fillStyle(this.world.silLight, 0.55);
-          g.fillTriangle(x + w * 0.45, 320 - h, x + w * 0.62, 320 - h * 0.55, x + w * 0.3, 320 - h * 0.55);
-        }
-      }
-      g.generateTexture(silKey, 400, 320);
-      g.destroy();
-    }
+    ensureWorldTextures(this, this.world);
     if (!this.textures.exists("shadowtex")) {
       const g = this.make.graphics({ x: 0, y: 0 }, false);
       // Layered ellipses approximate a soft radial shadow.
@@ -381,24 +462,12 @@ export class GameScene extends Phaser.Scene {
       g.generateTexture("shadowtex", 96, 28);
       g.destroy();
     }
-    const groundKey = `ground-${this.world.id}`;
-    if (!this.textures.exists(groundKey)) {
-      const g = this.make.graphics({ x: 0, y: 0 }, false);
-      g.fillStyle(this.world.groundBase, 1);
-      g.fillRect(0, 0, 80, 280);
-      g.fillStyle(this.world.groundGrid, 1);
-      g.fillRect(0, 0, 2, 280); // vertical grid line
-      g.fillRect(0, 56, 80, 1); // faint horizontals
-      g.fillRect(0, 140, 80, 1);
-      g.generateTexture(groundKey, 80, 280);
-      g.destroy();
-    }
   }
 
   private buildBackground(): void {
     const accent = levelColor(this.levelNum);
 
-    const sky = this.add.graphics().setDepth(0);
+    const sky = this.add.graphics();
     sky.fillGradientStyle(this.world.skyTop, this.world.skyTop, this.world.skyBottomA, this.world.skyBottomB, 1);
     sky.fillRect(0, 0, WORLD_WIDTH, GROUND_Y);
 
@@ -406,12 +475,10 @@ export class GameScene extends Phaser.Scene {
     this.bgFar = this.add
       .tileSprite(0, 0, WORLD_WIDTH, GROUND_Y, "stars")
       .setOrigin(0)
-      .setDepth(1)
       .setAlpha(0.7);
     this.bgMid = this.add
       .tileSprite(0, GROUND_Y - 320, WORLD_WIDTH, 320, silKey)
       .setOrigin(0)
-      .setDepth(2)
       .setAlpha(0.55); // atmospheric haze pushes the silhouette into the distance
     // Extra depth layer appears as the levels progress.
     this.bgMid2 = null;
@@ -420,27 +487,37 @@ export class GameScene extends Phaser.Scene {
       this.bgMid2 = this.add
         .tileSprite(0, GROUND_Y - 545, WORLD_WIDTH, 224, silKey)
         .setOrigin(0)
-        .setDepth(1)
         .setAlpha(0.3);
       this.bgMid2.setTileScale(0.7);
     }
 
-    const haze = this.add.graphics().setDepth(3);
+    const haze = this.add.graphics();
     haze.fillGradientStyle(this.world.haze, this.world.haze, this.world.haze, this.world.haze, 0, 0, 0.35, 0.35);
     haze.fillRect(0, GROUND_Y - 320, WORLD_WIDTH, 320);
 
+    // Whole scenery stack in one layer (paint order = old depth order 0-3)
+    // so zone mirror/flip transforms it in lockstep with the track.
+    this.bgLayer.add([
+      sky,
+      this.bgFar,
+      ...(this.bgMid2 ? [this.bgMid2] : []),
+      this.bgMid,
+      haze,
+    ]);
+
     this.groundTile = this.add
       .tileSprite(0, GROUND_Y, WORLD_WIDTH, WORLD_HEIGHT - GROUND_Y, `ground-${this.world.id}`)
-      .setOrigin(0)
-      .setDepth(4);
+      .setOrigin(0);
     // Ground falls away into darkness — reads as depth below the track.
-    const groundFade = this.add.graphics().setDepth(4);
+    const groundFade = this.add.graphics();
     groundFade.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0, 0, 0.65, 0.65);
     groundFade.fillRect(0, GROUND_Y, WORLD_WIDTH, WORLD_HEIGHT - GROUND_Y);
 
     // Neon edge on the ground plus a soft glow above it, in the level color.
-    this.add.rectangle(0, GROUND_Y - 10, WORLD_WIDTH, 10, accent, 0.12).setOrigin(0).setDepth(5);
-    this.add.rectangle(0, GROUND_Y - 3, WORLD_WIDTH, 5, accent).setOrigin(0).setDepth(5);
+    const glow = this.add.rectangle(0, GROUND_Y - 10, WORLD_WIDTH, 10, accent, 0.12).setOrigin(0);
+    const edge = this.add.rectangle(0, GROUND_Y - 3, WORLD_WIDTH, 5, accent).setOrigin(0);
+    // The whole track strip flips/mirrors with the zone transform.
+    this.trackLayer.add([this.groundTile, groundFade, glow, edge]);
   }
 
   private buildPlayer(): void {
@@ -449,30 +526,22 @@ export class GameScene extends Phaser.Scene {
     // Gold overlay shown only while the double-jump power-up is active —
     // distinct from the character's always-on signature aura.
     this.aura = this.add.rectangle(0, 0, s + 18, s + 18, 0xffd54f, 0.28).setVisible(false);
-    this.playerView = this.add
-      .container(PLAYER_X + s / 2, GROUND_Y - s / 2, [
-        this.aura,
-        ...buildCharacterParts(this, spec, s),
-      ])
-      .setDepth(10);
+    this.shieldRing = this.add
+      .circle(0, 0, s / 2 + 18)
+      .setStrokeStyle(4, 0x4dd0e1, 0.85)
+      .setVisible(false);
+    this.playerView = this.add.container(PLAYER_X + s / 2, GROUND_Y - s / 2, [
+      this.aura,
+      this.shieldRing,
+      ...buildCharacterParts(this, spec, s),
+    ]);
     attachAura(this, this.playerView, spec, s);
 
-    this.playerShadow = this.add
-      .image(PLAYER_X + s / 2, GROUND_Y + 9, "shadowtex")
-      .setDepth(6);
+    this.playerShadow = this.add.image(PLAYER_X + s / 2, GROUND_Y + 9, "shadowtex");
 
-    this.trail = this.add.particles(0, 0, "dot", {
-      follow: this.playerView,
-      speedX: { min: -40, max: -10 },
-      speedY: { min: -20, max: 20 },
-      lifespan: 350,
-      frequency: 28,
-      scale: { start: 1.1, end: 0 },
-      alpha: { start: 0.45, end: 0 },
-      tint: [...spec.trail],
-      emitting: false,
-    });
-    this.trail.setDepth(9);
+    // Signature per-character running trail (streaks/embers/bubbles/...),
+    // streaming at this level's track speed so it lays along the ground.
+    this.trail = buildCharacterTrail(this, this.playerView, spec, 1, levelSpeed(this.levelNum));
 
     this.dust = this.add.particles(0, 0, "dot", {
       speed: { min: 40, max: 140 },
@@ -483,7 +552,6 @@ export class GameScene extends Phaser.Scene {
       tint: 0x9e9e9e,
       emitting: false,
     });
-    this.dust.setDepth(9);
 
     this.sparkle = this.add.particles(0, 0, "dot", {
       speed: { min: 80, max: 260 },
@@ -493,7 +561,6 @@ export class GameScene extends Phaser.Scene {
       tint: [0xffd54f, 0xfff59d, 0xffffff],
       emitting: false,
     });
-    this.sparkle.setDepth(12);
 
     this.burst = this.add.particles(0, 0, "dot", {
       speed: { min: 120, max: 420 },
@@ -504,7 +571,19 @@ export class GameScene extends Phaser.Scene {
       tint: [0x26c6da, 0xffffff, 0xef5350],
       emitting: false,
     });
-    this.burst.setDepth(12);
+
+    // Track-layer draw order: shadow under everything spawned, spawned views
+    // under the trail/player, celebration particles on top.
+    this.trackObjects = this.add.container(0, 0);
+    this.trackLayer.add([
+      this.playerShadow,
+      this.trackObjects,
+      this.trail,
+      this.dust,
+      this.playerView,
+      this.sparkle,
+      this.burst,
+    ]);
   }
 
   private buildHud(): void {
@@ -530,6 +609,17 @@ export class GameScene extends Phaser.Scene {
       .setDepth(20);
     this.timerText.setShadow(0, 4, "#000000", 6, false, true);
 
+    // Distance run, mirroring the timer on the other side of the %.
+    this.metersText = this.add
+      .text(WORLD_WIDTH / 2 - 145, 110, "0m", {
+        fontFamily: "Arial, sans-serif",
+        fontSize: "30px",
+        color: "#8a93a8",
+      })
+      .setOrigin(1, 0.5)
+      .setDepth(20);
+    this.metersText.setShadow(0, 4, "#000000", 6, false, true);
+
     this.levelText = this.add
       .text(WORLD_WIDTH / 2, 172, `LEVEL ${this.levelNum}`, {
         fontFamily: "Arial, sans-serif",
@@ -539,6 +629,17 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(20);
     this.levelText.setShadow(0, 4, "#000000", 6, false, true);
+    if (isFinaleLevel(this.levelNum)) {
+      this.add
+        .text(WORLD_WIDTH / 2, 210, "★ FINALE ★", {
+          fontFamily: "Arial Black, sans-serif",
+          fontSize: "26px",
+          color: "#ffd700",
+        })
+        .setOrigin(0.5)
+        .setDepth(20)
+        .setShadow(0, 3, "#000000", 5, false, true);
+    }
 
     // Progress bar across the top, GD-style.
     this.add.rectangle(160, 36, 400, 10, 0x232b3e).setOrigin(0, 0.5).setDepth(20);
@@ -580,7 +681,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.readyText = this.add
-      .text(WORLD_WIDTH / 2, 700, `${this.world.name}\nLEVEL ${this.levelNum}\nTAP TO START`, {
+      .text(WORLD_WIDTH / 2, 460, `${this.world.name}\nLEVEL ${this.levelNum}\nTAP TO START`, {
         fontFamily: "Arial, sans-serif",
         fontSize: "52px",
         color: "#a5d6a7",
@@ -608,11 +709,15 @@ export class GameScene extends Phaser.Scene {
     }
     if (this.phase !== "playing") return;
     if (this.time.now < this.resumeGuardUntil) return;
-    const kind = tryJump(this.runner, this.doubleJumpMs > 0);
+    // One free air jump during a pad flight (besides the power-up's).
+    const kind = tryJump(this.runner, this.doubleJumpMs > 0 || this.padFlight);
     if (kind === "ground") {
       sfx.place();
+      haptics.tap();
+      this.punchScale(0.86, 1.14); // take-off stretch
     } else if (kind === "air") {
       sfx.clear(1);
+      haptics.tap();
       this.sparkle.explode(10, this.playerView.x, this.playerView.y + PLAYER_SIZE / 2);
     } else {
       this.jumpBufferMs = JUMP_BUFFER_MS;
@@ -623,46 +728,138 @@ export class GameScene extends Phaser.Scene {
     if (this.phase !== "playing") return;
     this.elapsedMs += deltaMs;
     const dt = Math.min(deltaMs, MAX_DT_MS) / 1000;
-    const speed = levelSpeed(this.levelNum);
-    this.distancePx += speed * dt;
+    const baseSpeed = levelSpeed(this.levelNum);
+    const dashing = this.distancePx < this.dashUntilPx;
+    const speed =
+      baseSpeed * (this.padFlight ? PAD_FLIGHT_SPEED_MUL : dashing ? DASH_MUL : 1);
+    // Slow-mo scales the whole simulation clock (scroll AND physics), so
+    // jump trajectories in px are unchanged and clearability is preserved.
+    // Surge speeds the whole sim clock (px trajectories unchanged); paused
+    // during pad flights so stacked compression can't undercut the
+    // leaderboard rules' minimum-clear-time floor.
+    const simDt = dt * (this.surgeMs > 0 && !this.padFlight ? SURGE_MUL : 1);
+    this.distancePx += speed * simDt;
 
     // Parallax: far stars drift, skyline rolls, ground grid matches the track.
-    this.bgFar.tilePositionX += speed * dt * 0.12;
-    if (this.bgMid2) this.bgMid2.tilePositionX += speed * dt * 0.22;
-    this.bgMid.tilePositionX += speed * dt * 0.4;
-    this.groundTile.tilePositionX += speed * dt;
+    this.bgFar.tilePositionX += speed * simDt * 0.12;
+    if (this.bgMid2) this.bgMid2.tilePositionX += speed * simDt * 0.22;
+    this.bgMid.tilePositionX += speed * simDt * 0.4;
+    this.groundTile.tilePositionX += speed * simDt;
 
     for (const { obs, view } of this.obstacles) {
-      obs.x -= speed * dt;
+      obs.x -= speed * simDt;
       view.x = obs.x;
-      // Swing mines bob and tentacles sway as functions of x — keep the
-      // views on their hitboxes; geyser columns show exactly when lethal.
-      if (obs.kind === "swing") view.y = GROUND_Y - obs.h - swingElev(obs);
-      else if (obs.kind === "tentacle") view.x = obs.x + tentacleSway(obs);
-      else if (obs.kind === "geyser") {
-        (view.getData("column") as Phaser.GameObjects.Container).setVisible(geyserActive(obs));
+      // Moving/timed kinds: keep every view on its hitbox — position follows
+      // the motion function, visibility/alpha tracks the lethal state.
+      switch (obs.kind) {
+        case "swing":
+          view.y = GROUND_Y - obs.h - swingElev(obs);
+          break;
+        case "tentacle":
+          view.x = obs.x + tentacleSway(obs);
+          break;
+        case "geyser":
+          (view.getData("column") as Phaser.GameObjects.Container).setVisible(geyserActive(obs));
+          break;
+        case "phantom":
+          view.setAlpha(phantomSolid(obs) ? 1 : 0.28);
+          break;
+        case "vine":
+          (view.getData("stalk") as Phaser.GameObjects.Container).scaleY = vineHeight(obs) / obs.h;
+          break;
+        case "gear":
+          view.x = obs.x + gearShift(obs);
+          break;
+        case "crusher":
+          view.y = GROUND_Y - obs.h - crusherElev(obs);
+          break;
+        case "talon":
+          (view.getData("blade") as Phaser.GameObjects.Container).setVisible(talonActive(obs));
+          break;
+        case "drone":
+          view.x = obs.x + droneShift(obs);
+          view.y = GROUND_Y - obs.h - droneElev(obs);
+          break;
+        case "comet":
+          view.y = GROUND_Y - obs.h - cometElev(obs);
+          break;
+        case "reaper":
+          (view.getData("blade") as Phaser.GameObjects.Container).setVisible(reaperActive(obs));
+          break;
+        case "wisp":
+          view.y = GROUND_Y - obs.h - wispElev(obs);
+          break;
+        case "flux":
+          view.setAlpha(fluxOn(obs) ? 1 : 0.3);
+          break;
+        case "pendul":
+          view.x = obs.x + pendulShift(obs);
+          break;
+        case "cyclone":
+          view.x = obs.x + cycloneSway(obs);
+          break;
+        case "specter":
+          view.setAlpha(specterSolid(obs) ? 1 : 0.25);
+          break;
+        case "nova": {
+          const sat = novaSatPos(obs);
+          (view.getData("satellite") as Phaser.GameObjects.Container).setPosition(
+            obs.w / 2 + sat.dx,
+            obs.h / 2 + sat.dy,
+          );
+          break;
+        }
       }
     }
     while (this.obstacles.length > 0 && this.obstacles[0]!.obs.x + this.obstacles[0]!.obs.w < -40) {
       this.obstacles.shift()!.view.destroy();
     }
-    this.maybeSpawnPattern(speed);
-    this.updatePowerUps(speed, dt, deltaMs);
+    if (this.attemptText) {
+      this.attemptText.x -= speed * simDt;
+      if (this.attemptText.x < -240) {
+        this.attemptText.destroy();
+        this.attemptText = null;
+      }
+    }
+
+    // Spawning always uses the BASE speed: pattern choice and gap sizing must
+    // be a pure function of track distance, or a collected slow-mo/dash would
+    // change the layout and break the identical-every-attempt guarantee.
+    this.maybeSpawnPattern(baseSpeed);
+    this.updatePowerUps(speed, simDt, deltaMs);
     this.updateFinish();
+    this.updateZones();
+    this.updateBoosts(speed);
 
     const obsList = this.obstacles.map((o) => o.obs);
     const wasAirborne = !this.runner.grounded;
-    stepRunner(this.runner, dt, supportAt(this.runner.y, obsList));
+    stepRunner(this.runner, simDt, supportAt(this.runner.y, obsList));
+    if (this.runner.grounded && this.padFlight) {
+      // Flight ends on touchdown — no landing grace; the flight itself is
+      // lethal too (invincibility removed per user): the one free air jump
+      // is the player's steering tool.
+      this.padFlight = false;
+    }
+    // Trail burns hotter while airborne (only touch frequency on the
+    // transition — setFrequency resets the emitter's flow counter).
+    if (!this.runner.grounded !== wasAirborne) {
+      const baseFreq = this.trail.getData("baseFrequency") as number;
+      this.trail.setFrequency(this.runner.grounded ? baseFreq : baseFreq / TRAIL_AIR_BOOST);
+    }
     if (this.runner.grounded && wasAirborne) {
       this.playerView.rotation = Math.round(this.playerView.rotation / (Math.PI / 2)) * (Math.PI / 2);
       this.dust.explode(6, this.playerView.x, this.runner.y - 4);
+      // Landing feel lives on the CUBE only (squash + dust) — camera kicks
+      // on landings read as the world wobbling and were removed per user.
+      this.punchScale(1.18, 0.82);
       if (this.jumpBufferMs > 0) {
         jump(this.runner);
         sfx.place();
+        this.punchScale(0.86, 1.14);
       }
     }
     this.jumpBufferMs = Math.max(0, this.jumpBufferMs - deltaMs);
-    if (!this.runner.grounded) this.playerView.rotation += 6 * dt;
+    if (!this.runner.grounded) this.playerView.rotation += 6 * simDt;
     this.playerView.y = this.runner.y - PLAYER_SIZE / 2;
 
     // Ground shadow shrinks and fades as the cube gains height.
@@ -672,9 +869,17 @@ export class GameScene extends Phaser.Scene {
 
     this.scoreText.setText(`${this.progressPct()}%`);
     this.timerText.setText(`${(this.elapsedMs / 1000).toFixed(1)}s`);
+    this.metersText.setText(`${Math.floor(this.distancePx / 10)}m`);
     this.progressFill.setScale(Math.min(1, this.distancePx / this.levelLengthPx), 1);
 
-    if (this.remainingPx() <= 40) {
+    // Music builds with the run: sparse start, hat joins at 33%, full at 66%.
+    const prog = this.distancePx / this.levelLengthPx;
+    this.bgm.setVoiceGain("hat", prog >= 0.33 ? 1 : 0);
+    this.bgm.setVoiceGain("lead", prog >= 0.66 ? 1 : prog >= 0.33 ? 0.85 : 0.6);
+
+    // Complete only when the cube is FULLY past the pole (remaining 0) —
+    // the old 40px-early trigger stopped the clock ~0.1s short of the line.
+    if (this.remainingPx() <= 0) {
       this.completeLevel();
       return;
     }
@@ -685,7 +890,138 @@ export class GameScene extends Phaser.Scene {
       if (this.invulnMs <= 0) this.playerView.setAlpha(1);
       return;
     }
-    if (checkDeath(this.runner.y, obsList)) this.die();
+    if (checkDeath(this.runner.y, obsList)) {
+      if (this.shieldEscaping) return; // still crossing the hit that broke it
+      if (this.shieldMs > 0) {
+        // The shield takes the hit: break it and pass through THIS collision
+        // only — lethality re-arms on the first hazard-free frame (no timed
+        // invincibility window).
+        this.shieldMs = 0;
+        this.shieldEscaping = true;
+        storage.set("shieldSaves", storage.get("shieldSaves", 0) + 1);
+        sfx.clear(3);
+        this.sparkle.explode(18, this.playerView.x, this.playerView.y);
+        floatBanner(this, "⛨ SAVED!", 520, "56px", "#4dd0e1");
+      } else {
+        this.die();
+      }
+      return;
+    }
+    this.shieldEscaping = false;
+    // Near-miss: mark obstacles grazed, celebrate once safely past them.
+    for (const ov of this.obstacles) {
+      if (!ov.grazed && nearMiss(this.runner.y, [ov.obs])) ov.grazed = true;
+      if (ov.grazed && !ov.rewarded && ov.obs.x + ov.obs.w < PLAYER_X) {
+        ov.rewarded = true;
+        this.sparkle.explode(8, ov.obs.x + ov.obs.w / 2, this.playerView.y);
+        sfx.place();
+        storage.set("nearMisses", storage.get("nearMisses", 0) + 1);
+      }
+    }
+  }
+
+  /**
+   * Mirror/flip zones: one transform on the track layer. Mirror reflects the
+   * view about the canvas center (the cube appears to run right-to-left);
+   * flip reflects it about FLIP_PIVOT_Y (the cube runs the ceiling track).
+   */
+  private updateZones(): void {
+    // Portal gates scroll with the track; positioned in track coordinates so
+    // the layer transform carries them too.
+    for (const { at, view } of this.zoneGates) {
+      const x = PLAYER_X + (at - this.distancePx);
+      view.x = x;
+      view.setVisible(x > -80 && x < WORLD_WIDTH + 80);
+    }
+    const kind = zoneKindAt(this.distancePx, this.zones);
+    if (kind === this.activeZone) return;
+    this.activeZone = kind;
+    // Track AND scenery share the reflection, so the whole world reverses/
+    // flips together (background parallax streams the mirrored way too).
+    for (const layer of [this.trackLayer, this.bgLayer]) {
+      layer.setScale(kind === "mirror" ? -1 : 1, kind === "flip" ? -1 : 1);
+      layer.setPosition(kind === "mirror" ? WORLD_WIDTH : 0, kind === "flip" ? FLIP_PIVOT_Y * 2 : 0);
+    }
+    const c = Phaser.Display.Color.IntegerToColor(kind ? ZONE_COLORS[kind] : 0xffffff);
+    this.cameras.main.flash(220, c.red, c.green, c.blue);
+    sfx.clear(kind ? 2 : 1);
+  }
+
+  /** One shimmering portal pillar per zone boundary, telegraphed on-track. */
+  private buildZoneGates(): void {
+    for (const z of this.zones) {
+      for (const at of [z.start, z.end]) {
+        const gate = this.add.container(WORLD_WIDTH + 200, 0);
+        // Shared art (trackView) — the guide previews the identical pillar.
+        const pillar = buildZoneGateView(this, z.kind);
+        pillar.setPosition(-ZONE_GATE_SIZE.w / 2, GROUND_Y - 190);
+        gate.add(pillar);
+        gate.setVisible(false);
+        this.trackObjects.add(gate);
+        this.zoneGates.push({ at, view: gate });
+      }
+    }
+  }
+
+  /** Launch pads and dash strips: helper track elements, never hazards. */
+  private buildBoosts(): void {
+    for (const b of trackBoosts(this.levelNum, this.levelLengthPx)) {
+      const view = this.add.container(WORLD_WIDTH + 400, 0).setVisible(false);
+      // Shared art (trackView) — the guide previews the identical element.
+      const { w, h } = BOOST_PREVIEW[b.kind];
+      const art = buildBoostView(this, b.kind);
+      art.setPosition(-w / 2, GROUND_Y - h);
+      view.add(art);
+      this.trackObjects.add(view);
+      this.boosts.push({ b, view, used: false });
+    }
+  }
+
+  private updateBoosts(speed: number): void {
+    for (const bo of this.boosts) {
+      let x = PLAYER_X + (bo.b.at - this.distancePx);
+      // Seeded boost placements don't know the obstacle layout — slide any
+      // boost that would sit on/next to a hazard further down the track
+      // until it lands in a gap. Layouts are deterministic, so the settled
+      // spot is identical every run (mirrored in test/levelSim.ts).
+      if (!bo.used && x > -100 && x < WORLD_WIDTH + 300) {
+        const half = BOOST_FOOTPRINT[bo.b.kind] / 2 + 30;
+        while (this.obstacles.some(({ obs }) => obs.x < x + half && obs.x + obs.w > x - half)) {
+          bo.b.at += 40;
+          x += 40;
+          if (bo.b.at > this.levelLengthPx - CLEAR_RUNWAY_PX - 400) {
+            // No room left before the finish runway — retire this boost.
+            bo.used = true;
+            bo.b.at = this.levelLengthPx + 100_000;
+            x = PLAYER_X + (bo.b.at - this.distancePx);
+            break;
+          }
+        }
+      }
+      bo.view.x = x;
+      bo.view.setVisible(x > -300 && x < WORLD_WIDTH + 300);
+      if (bo.used || this.distancePx < bo.b.at) continue;
+      bo.used = true;
+      if (bo.b.kind === "strip") {
+        this.dashUntilPx = bo.b.at + DASH_LENGTH_PX;
+        sfx.clear(2);
+        this.sparkle.explode(12, this.playerView.x, this.playerView.y);
+      } else if (this.runner.grounded) {
+        // CANNON SHOT — pads always fire when run over. The world streams
+        // past at PAD_FLIGHT_SPEED_MUL until touchdown, and the player
+        // keeps one free mid-air jump to steer the landing.
+        this.runner.vy = PAD_JUMP_VELOCITY;
+        this.runner.grounded = false;
+        this.runner.coyoteMs = 0;
+        this.runner.airJumpUsed = false;
+        this.padFlight = true;
+        sfx.clear(2);
+        haptics.tap();
+        this.punchScale(0.7, 1.3);
+        this.dust.explode(14, this.playerView.x, GROUND_Y - 4);
+        this.sparkle.explode(10, this.playerView.x, this.playerView.y);
+      }
+    }
   }
 
   /** The finish line scrolls in with the track once it's within reach. */
@@ -700,8 +1036,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private buildFinishView(): Phaser.GameObjects.Container {
-    const container = this.add.container(WORLD_WIDTH + 200, 0).setDepth(8);
-    const accent = levelColor(this.levelNum);
+    const container = this.add.container(WORLD_WIDTH + 200, 0);
+    this.trackObjects.add(container);
+    // Finale gates are gold — the world's crowning run.
+    const accent = isFinaleLevel(this.levelNum) ? 0xffd700 : levelColor(this.levelNum);
     // Glowing pole from ground to sky with a checkered flag block.
     container.add(this.add.rectangle(0, GROUND_Y - 420, 26, 420, 0x0c0e14, 0.6).setOrigin(0.5, 0));
     container.add(this.add.rectangle(0, GROUND_Y - 420, 8, 420, accent).setOrigin(0.5, 0));
@@ -745,47 +1083,48 @@ export class GameScene extends Phaser.Scene {
         ({ obs }) => obs.x < x + 160 && obs.x + obs.w > x - 160,
       );
       if (!blocked) {
-        const p = makePowerUp(this.rng, x);
+        const p = makePowerUp(this.rng, x, this.levelNum);
         this.powerUps.push({ p, view: this.buildPowerUpView(p) });
         this.nextPowerUpAt = this.distancePx + powerUpGapPx(this.rng);
       }
     }
 
-    // Tick down the active effect.
-    if (this.doubleJumpMs > 0) {
-      this.doubleJumpMs = Math.max(0, this.doubleJumpMs - deltaMs);
-      this.powerBadge.setText(`⇈ ${Math.ceil(this.doubleJumpMs / 1000)}s`);
-      this.aura.setVisible(true);
-      this.aura.setAlpha(0.2 + 0.12 * Math.sin(this.time.now / 110));
-      if (this.doubleJumpMs === 0) {
-        this.powerBadge.setText("");
-        this.aura.setVisible(false);
-      }
+    // Tick down active effects and rebuild the badge column.
+    this.doubleJumpMs = Math.max(0, this.doubleJumpMs - deltaMs);
+    this.shieldMs = Math.max(0, this.shieldMs - deltaMs);
+    this.surgeMs = Math.max(0, this.surgeMs - deltaMs);
+    const badges: string[] = [];
+    if (this.doubleJumpMs > 0) badges.push(`⇈ ${Math.ceil(this.doubleJumpMs / 1000)}s`);
+    if (this.shieldMs > 0) badges.push(`⛨ ${Math.ceil(this.shieldMs / 1000)}s`);
+    if (this.surgeMs > 0) badges.push(`≫ ${Math.ceil(this.surgeMs / 1000)}s`);
+    this.powerBadge.setText(badges.join("\n"));
+    this.aura.setVisible(this.doubleJumpMs > 0);
+    if (this.doubleJumpMs > 0) this.aura.setAlpha(0.2 + 0.12 * Math.sin(this.time.now / 110));
+    this.shieldRing.setVisible(this.shieldMs > 0);
+    if (this.shieldMs > 0) {
+      this.shieldRing.setAlpha(this.shieldMs < 3000 ? 0.35 + 0.5 * Math.abs(Math.sin(this.time.now / 90)) : 0.85);
     }
   }
 
   private collectPowerUp(p: PowerUp): void {
     const spec = POWER_UPS[p.kind];
-    this.doubleJumpMs = spec.durationMs;
+    if (p.kind === "doubleJump") {
+      this.doubleJumpMs = spec.durationMs;
+    } else if (p.kind === "shield") {
+      this.shieldMs = spec.durationMs;
+    } else {
+      this.surgeMs = spec.durationMs;
+      storage.set("surgeUses", storage.get("surgeUses", 0) + 1);
+    }
     sfx.clear(2);
     this.sparkle.explode(16, PLAYER_X + PLAYER_SIZE / 2, p.y);
-    floatBanner(this, `${spec.label}!`, 520, "60px", "#ffd54f");
+    floatBanner(this, `${spec.label}!`, 520, "60px", `#${spec.color.toString(16).padStart(6, "0")}`);
   }
 
   private buildPowerUpView(p: PowerUp): Phaser.GameObjects.Container {
-    const spec = POWER_UPS[p.kind];
-    const container = this.add.container(p.x, p.y).setDepth(9);
-    const diamond = this.add.rectangle(0, 0, 40, 40, spec.color).setStrokeStyle(4, 0xffffff, 0.9);
-    diamond.setAngle(45);
-    const glyph = this.add
-      .text(0, 0, "⇈", {
-        fontFamily: "Arial Black, sans-serif",
-        fontSize: "26px",
-        color: "#12141c",
-      })
-      .setOrigin(0.5);
-    container.add([diamond, glyph]);
-    this.tweens.add({ targets: diamond, angle: 405, duration: 1800, repeat: -1 });
+    // Shared art (trackView) — the guide previews the identical gem.
+    const container = this.add.container(p.x, p.y, [buildPickupView(this, p.kind)]);
+    this.trackObjects.add(container);
     // Visual bob only — the logic-side pickup box stays at p.y.
     this.tweens.add({
       targets: container,
@@ -814,29 +1153,36 @@ export class GameScene extends Phaser.Scene {
         h: spec.h,
         elev: spec.elev ?? 0,
         kind: spec.kind,
-        // Seeded rng: bob/eruption/sway phases are part of the fixed layout.
-        phase:
-          spec.kind === "swing" || spec.kind === "geyser" || spec.kind === "tentacle"
-            ? this.rng.next() * Math.PI * 2
-            : 0,
+        // Seeded rng: motion phases are part of the level's fixed layout.
+        phase: KINDS_WITH_PHASE.has(spec.kind) ? this.rng.next() * Math.PI * 2 : 0,
       };
       this.obstacles.push({ obs, view: this.buildObstacleView(obs) });
     }
   }
 
   private buildObstacleView(obs: Obstacle): Phaser.GameObjects.Container {
-    const top =
-      obs.kind === "swing"
-        ? GROUND_Y - obs.h - swingElev(obs)
-        : GROUND_Y - obs.elev - obs.h;
-    const container = this.add.container(obs.x, top).setDepth(8);
+    const movingElev =
+      obs.kind === "swing" ? swingElev(obs)
+      : obs.kind === "crusher" ? crusherElev(obs)
+      : obs.kind === "drone" ? droneElev(obs)
+      : obs.kind === "comet" ? cometElev(obs)
+      : obs.kind === "wisp" ? wispElev(obs)
+      : obs.elev;
+    const top = GROUND_Y - movingElev - obs.h;
+    const container = this.add.container(obs.x, top);
+    this.trackObjects.add(container);
     const { w, h } = obs;
     const floating = obs.elev > 0;
 
     // Shadow falls on the ground below — smaller/fainter for floating
-    // objects. Pits/geysers are holes and swing mines/lasers/tentacles/arcs
-    // move or glow — no cast shadow for those.
-    const noShadow: readonly ObstacleKind[] = ["pit", "swing", "laser", "geyser", "tentacle", "arc"];
+    // objects. Holes, glowing hazards and everything that moves or draws its
+    // own contact shading skips the cast shadow; solid statics keep it.
+    const noShadow: readonly ObstacleKind[] = [
+      "pit", "swing", "laser", "geyser", "tentacle", "arc",
+      "phantom", "vine", "gear", "gate", "crusher", "urchin", "talon", "drone", "flare", "comet", "reaper",
+      // Air hazards: all floating/glowing — no cast shadows.
+      "halo", "wisp", "lance", "swarm", "flux", "pendul", "rails", "cyclone", "specter", "nova",
+    ];
     if (!noShadow.includes(obs.kind)) {
       const shadow = this.add
         .image(w / 2 + 8, h + obs.elev + 7, "shadowtex")
@@ -875,9 +1221,42 @@ export class GameScene extends Phaser.Scene {
       storage.set("unlockedLevel", this.levelNum + 1);
     }
     sfx.clear(4);
+    haptics.win();
     stopAllMusic();
     this.sparkle.explode(30, this.playerView.x, this.playerView.y);
+    if (isFinaleLevel(this.levelNum)) {
+      // World finale: proper confetti send-off.
+      for (const [delay, x] of [[200, 200], [400, 520], [650, 360]] as const) {
+        this.time.delayedCall(delay, () => this.sparkle.explode(24, x, 400 + Math.random() * 200));
+      }
+    }
     void adsReady.then((ads) => ads.maybeShowInterstitial());
+    storage.set("totalClears", storage.get("totalClears", 0) + 1);
+    storage.set("totalPlayMs", storage.get("totalPlayMs", 0) + this.elapsedMs);
+    storage.set("totalMeters", storage.get("totalMeters", 0) + levelLengthM(this.levelNum));
+    if (levelDurationSec(this.levelNum) >= 45 && !this.usedContinue) {
+      storage.set("longNoRevive", true);
+    }
+    this.toastAchievements();
+
+    // Leaderboard: record + submit the best clear time (never in god mode).
+    let improvedTime = false;
+    if (!godModeOn()) {
+      const timeKey = `bestTimeMs:${this.levelNum}`;
+      const prevBest = storage.get(timeKey, 0);
+      const timeMs = Math.round(this.elapsedMs);
+      if (prevBest <= 0 || timeMs < prevBest) {
+        improvedTime = true;
+        storage.set(timeKey, timeMs);
+        const lb = leaderboard();
+        void lb
+          .submitLevel(this.levelNum, timeMs)
+          .then(() => lb.submitOverall())
+          .catch(() => {});
+      }
+    }
+    // Cloud save: persist the new progress to the account (dirty-retried).
+    void saves.push();
 
     const { width, height } = this.scale;
     const overlay = this.add.container(0, 0).setDepth(100);
@@ -935,22 +1314,62 @@ export class GameScene extends Phaser.Scene {
         "40px",
       ),
     );
+
+    if (improvedTime) {
+      floatBanner(this, "NEW BEST TIME!", 300, "52px", "#80deea", 120);
+      // World rank arrives async; skip silently when offline/unconfigured.
+      const rankText = this.add
+        .text(width / 2, height * 0.51, "", {
+          fontFamily: "Arial Black, sans-serif",
+          fontSize: "34px",
+          color: "#ffd700",
+        })
+        .setOrigin(0.5);
+      overlay.add(rankText);
+      void leaderboard()
+        .myLevelRank(this.levelNum)
+        .then((rank) => {
+          if (rank && rankText.active) rankText.setText(`🌍 WORLD RANK #${rank}`);
+        })
+        .catch(() => {});
+    }
   }
 
   private die(): void {
     this.phase = "dead";
     this.trail.emitting = false;
+    stopAllMusic();
+    // Freeze-frame: hold the crash pose a beat, THEN detonate — the pause
+    // makes the explosion land harder (ported from the Unity v2 feel pass).
+    this.time.delayedCall(80, () => this.explodeAndShowDeathOverlay());
+  }
+
+  private explodeAndShowDeathOverlay(): void {
     this.burst.explode(28, this.playerView.x, this.playerView.y);
     this.playerView.setVisible(false);
     this.playerShadow.setVisible(false);
     this.aura.setVisible(false);
     this.powerBadge.setText("");
     sfx.gameOver();
-    stopAllMusic();
-    this.cameras.main.shake(200, 0.01);
+    haptics.thud();
+    this.cameras.main.shake(180, 0.012);
+    // Zoom punch: a quick push-in sells the impact.
+    this.tweens.add({
+      targets: this.cameras.main,
+      zoom: 1.06,
+      duration: 90,
+      yoyo: true,
+      ease: "Sine.easeOut",
+    });
     const pct = this.progressPct();
     const best = this.bumpBestPct(pct);
     void adsReady.then((ads) => ads.maybeShowInterstitial());
+    storage.set("totalDeaths", storage.get("totalDeaths", 0) + 1);
+    storage.set("totalPlayMs", storage.get("totalPlayMs", 0) + this.elapsedMs);
+    storage.set("totalMeters", storage.get("totalMeters", 0) + Math.floor(this.distancePx / 10));
+    this.toastAchievements();
+    this.deadButtons = [];
+    this.retryReadyAt = this.time.now + 400; // swallow panic taps
 
     const { width, height } = this.scale;
     const overlay = this.add.container(0, 0).setDepth(100);
@@ -976,49 +1395,65 @@ export class GameScene extends Phaser.Scene {
         .setOrigin(0.5),
     );
 
-    overlay.add(
-      textButton(
-        this,
-        width / 2,
-        height * 0.56,
-        "↻  RETRY",
-        { text: "#a5d6a7", background: "#1e3320" },
-        () => this.scene.restart({ level: this.levelNum }),
-      ),
+    const retryBtn = textButton(
+      this,
+      width / 2,
+      height * 0.56,
+      "↻  RETRY",
+      { text: "#a5d6a7", background: "#1e3320" },
+      () => this.scene.restart({ level: this.levelNum }),
     );
+    const menuBtn = textButton(
+      this,
+      width / 2,
+      height * 0.75,
+      "☰  MENU",
+      { text: "#90caf9", background: "#16283d" },
+      () => this.scene.start("menu"),
+      "40px",
+    );
+    overlay.add([retryBtn, menuBtn]);
+    this.deadButtons.push(retryBtn, menuBtn);
     overlay.add(
-      textButton(
-        this,
-        width / 2,
-        height * 0.75,
-        "☰  MENU",
-        { text: "#90caf9", background: "#16283d" },
-        () => this.scene.start("menu"),
-        "40px",
-      ),
+      this.add
+        .text(width / 2, height * 0.85, "or tap anywhere to retry", {
+          fontFamily: "Arial, sans-serif",
+          fontSize: "30px",
+          color: "#5c667d",
+        })
+        .setOrigin(0.5),
     );
 
     if (!this.usedContinue) {
       void adsReady.then((ads) => {
         if (this.phase === "dead" && ads.isRewardedReady()) {
-          overlay.add(
-            textButton(
-              this,
-              width / 2,
-              height * 0.655,
-              "🎬  KEEP RUNNING (AD)",
-              { text: "#90caf9", background: "#16283d" },
-              () => {
-                void ads.showRewarded().then((earned) => {
-                  if (earned) this.revive(overlay);
-                });
-              },
-              "44px",
-            ),
+          const adBtn = textButton(
+            this,
+            width / 2,
+            height * 0.655,
+            "🎬  KEEP RUNNING (AD)",
+            { text: "#90caf9", background: "#16283d" },
+            () => {
+              void ads.showRewarded().then((earned) => {
+                if (earned) this.revive(overlay);
+              });
+            },
+            "44px",
           );
+          overlay.add(adBtn);
+          this.deadButtons.push(adBtn);
         }
       });
     }
+  }
+
+  /** Toast any achievements this run just unlocked, above the end overlay. */
+  private toastAchievements(): void {
+    newlyEarned(storage).forEach((a, i) => {
+      this.time.delayedCall(500 + i * 950, () =>
+        floatBanner(this, `🏆 ${a.name}`, 180, "48px", "#ffd54f", 120),
+      );
+    });
   }
 
   /** Rewarded revive: clear the obstacles ahead and blink through briefly. */
@@ -1036,10 +1471,14 @@ export class GameScene extends Phaser.Scene {
     this.runner.y = GROUND_Y;
     this.runner.vy = 0;
     this.runner.grounded = true;
+    this.squashTween?.stop();
+    this.playerView.setScale(1, 1);
     this.playerView.rotation = 0;
     this.playerView.setVisible(true);
     this.playerShadow.setVisible(true);
     this.trail.emitting = true;
+    // Revive skips the landing transition — drop any airborne trail boost.
+    this.trail.setFrequency(this.trail.getData("baseFrequency") as number);
     this.invulnMs = REVIVE_INVULN_MS;
     this.phase = "playing";
     if (!storage.get("musicMuted", false)) this.bgm.start();

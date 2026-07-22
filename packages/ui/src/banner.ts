@@ -7,6 +7,7 @@ export function floatBanner(
   y: number,
   fontSize = "72px",
   color = "#ffd54f",
+  depth = 50,
 ): void {
   const banner = scene.add
     .text(scene.scale.width / 2, y, message, {
@@ -16,10 +17,12 @@ export function floatBanner(
       stroke: "#000000",
       strokeThickness: 8,
       align: "center",
+      // Device-resolution rasterization keeps the big banner glyphs crisp.
+      resolution: Math.min(window.devicePixelRatio || 1, 3),
     })
     .setOrigin(0.5)
     .setScale(0.3)
-    .setDepth(50);
+    .setDepth(depth);
   banner.setShadow(0, 8, "#000000", 10, false, true);
   scene.tweens.add({
     targets: banner,

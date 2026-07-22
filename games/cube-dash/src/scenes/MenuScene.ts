@@ -1,13 +1,40 @@
 import Phaser from "phaser";
-import { GameStorage } from "@mg/core";
+import { GameStorage, haptics, sfx } from "@mg/core";
 import { textButton } from "@mg/ui";
-import { KIND_UNLOCK_LEVEL, LEVELS_PER_WORLD, levelColor, levelDurationSec } from "../logic/runner";
-import type { ObstacleKind } from "../logic/runner";
+import {
+  FLIP_MIN_LEVEL,
+  KIND_UNLOCK_LEVEL,
+  LEVELS_PER_WORLD,
+  MIRROR_MIN_LEVEL,
+  PAD_MIN_LEVEL,
+  POWERUP_UNLOCK_LEVEL,
+  POWER_UPS,
+  STRIP_MIN_LEVEL,
+  isFinaleLevel,
+  levelColor,
+  levelDurationSec,
+} from "../logic/runner";
+import type { BoostKind, ObstacleKind, PowerUpKind, TrackZoneKind } from "../logic/runner";
 import { worldForLevel } from "../worlds";
 import { CHARACTERS, characterById, isCharacterUnlocked } from "../characters";
-import { attachAura, buildCharacterParts } from "../characterView";
-import { OBSTACLE_INFO } from "../obstacles";
+import type { CharacterSpec } from "../characters";
+import { attachAura, buildCharacterParts, buildCharacterTrail } from "../characterView";
+import { BOOST_INFO, OBSTACLE_INFO, POWERUP_INFO, ZONE_INFO } from "../obstacles";
 import { OBSTACLE_PREVIEW, buildObstaclePreview } from "../obstacleView";
+import {
+  BOOST_PREVIEW,
+  ZONE_COLORS,
+  ZONE_GATE_SIZE,
+  buildBoostView,
+  buildPickupView,
+  buildZoneGateView,
+} from "../trackView";
+import { ACHIEVEMENTS, isEarned } from "../achievements";
+import { leaderboard } from "../leaderboard";
+import { accountName, logIn, logOut, loginProviders, sessionSync } from "../account";
+import type { AuthProviderId } from "@mg/firebase";
+import { formatTimeMs, validName } from "@mg/leaderboard";
+import { ensureWorldTextures } from "../worldView";
 
 export const storage = new GameStorage("cube-dash");
 
@@ -29,6 +56,15 @@ export function godModeOn(): boolean {
   return godModeAvailable() && storage.get("godMode", false);
 }
 
+type GuideCategory = "hazards" | "powerups" | "boosters" | "gates";
+
+const GUIDE_CATEGORIES: ReadonlyArray<{ id: GuideCategory; label: string; x: number }> = [
+  { id: "hazards", label: "HAZARDS", x: 105 },
+  { id: "powerups", label: "POWER-UPS", x: 297 },
+  { id: "boosters", label: "BOOSTS", x: 480 },
+  { id: "gates", label: "GATES", x: 632 },
+];
+
 export class MenuScene extends Phaser.Scene {
   private selected = 1;
   private levelWord!: Phaser.GameObjects.Text;
@@ -38,9 +74,110 @@ export class MenuScene extends Phaser.Scene {
   private charIndex = 0;
   private charPreview: Phaser.GameObjects.Container | null = null;
   private charName!: Phaser.GameObjects.Text;
+  private attract: Phaser.GameObjects.Container | null = null;
+  private attractWorldId = "";
 
   constructor() {
     super("menu");
+  }
+
+  /**
+   * ⚙ Settings: every toggle in one place — SFX / music / haptics, the
+   * account row (sign in to save progress across devices; hidden until
+   * Firebase is configured), and the dev-only god mode. Toggles re-render
+   * by rebuilding the overlay; account/god changes restart the scene
+   * (progress or its clamping may change).
+   */
+  private openSettings(): void {
+    const { width } = this.scale;
+    const overlay = this.buildOverlay("SETTINGS");
+    const reopen = (): void => {
+      overlay.destroy();
+      this.openSettings();
+    };
+    let y = 300;
+    const row = (
+      label: string,
+      colors: { text: string; background: string },
+      onTap: () => void,
+    ): void => {
+      overlay.add(textButton(this, width / 2, y, label, colors, onTap, "30px"));
+      y += 110;
+    };
+    const toggleRow = (label: string, on: boolean, flip: () => void): void => {
+      row(
+        `${label}: ${on ? "ON" : "OFF"}`,
+        { text: on ? "#8a93a8" : "#5c667d", background: "#181d2b" },
+        () => {
+          flip();
+          reopen();
+        },
+      );
+    };
+
+    const sfxOn = !storage.get("sfxMuted", false);
+    toggleRow("🔊 SFX", sfxOn, () => {
+      storage.set("sfxMuted", sfxOn);
+      sfx.setMuted(sfxOn);
+    });
+    const musicOn = !storage.get("musicMuted", false);
+    toggleRow("🎵 MUSIC", musicOn, () => storage.set("musicMuted", musicOn));
+    const hapticsOn = !storage.get("hapticsOff", false);
+    toggleRow("📳 HAPTICS", hapticsOn, () => {
+      storage.set("hapticsOff", hapticsOn);
+      haptics.setEnabled(!hapticsOn);
+    });
+
+    const providers = loginProviders();
+    if (providers.length > 0) {
+      const name = accountName();
+      if (name !== "") {
+        row(
+          `👤 ${name.split(" ")[0]!.slice(0, 12).toUpperCase()} — SIGN OUT`,
+          { text: "#7ee0a3", background: "#12281a" },
+          () => void this.accountSignOut(overlay),
+        );
+      } else {
+        // One provider today → straight to its popup (must stay inside the
+        // tap gesture); a chooser gets added with the second provider.
+        row(
+          `👤 SIGN IN WITH ${providers[0]!.label.toUpperCase()}`,
+          { text: "#80deea", background: "#12262b" },
+          () => void this.accountSignIn(providers[0]!.id),
+        );
+      }
+    }
+
+    if (godModeAvailable()) {
+      const on = storage.get("godMode", false);
+      row(
+        on ? "⚡ GOD MODE: ON" : "⚡ GOD MODE: OFF",
+        on
+          ? { text: "#ffd54f", background: "#3a2f10" }
+          : { text: "#5c667d", background: "#181d2b" },
+        () => {
+          storage.set("godMode", !on);
+          this.scene.restart(); // re-reads progress → selection re-clamps
+        },
+      );
+    }
+  }
+
+  private async accountSignIn(providerId: AuthProviderId): Promise<void> {
+    try {
+      const user = await logIn(providerId);
+      if (user !== null) this.scene.restart(); // re-renders + shows merged progress
+    } catch {
+      window.alert("Sign-in failed — check your connection and try again.");
+    }
+  }
+
+  private async accountSignOut(overlay: Phaser.GameObjects.Container): Promise<void> {
+    const msg = `Signed in as ${accountName()}.\nSign out? Your progress stays saved to the account.`;
+    if (!window.confirm(msg)) return;
+    overlay.destroy();
+    await logOut();
+    this.scene.restart();
   }
 
   /** Highest selectable level: real progress, or everything in god mode. */
@@ -53,38 +190,43 @@ export class MenuScene extends Phaser.Scene {
     const unlocked = this.unlockedLevel();
     this.selected = Math.min(storage.get("lastPlayed", 1), unlocked);
 
-    // Obstacle encyclopedia — every hazard met so far, plus teasers ahead.
+    // Attract-mode backdrop: the selected level's world, with a demo cube
+    // running along the bottom. Rebuilt whenever the selected world changes.
+    this.attract = null;
+    this.attractWorldId = "";
+    this.buildAttract();
+    sfx.setMuted(storage.get("sfxMuted", false));
+
+    // Cloud save: one background sync per session; if the account's remote
+    // save improved local progress, rebuild so unlocks/selection update.
+    void sessionSync().then((changed) => {
+      if (changed.length > 0 && this.scene.isActive("menu")) this.scene.restart();
+    });
+
+    // Top chrome: one uniform icon row (guide / trophies / stats /
+    // leaderboard) plus a single ⚙ that gathers every toggle — SFX, music,
+    // haptics, account, dev god mode — into the settings overlay.
+    const topButtons: ReadonlyArray<[string, () => void]> = [
+      ["📖", () => this.openEncyclopedia()],
+      ["🏆", () => this.openTrophies()],
+      ["📊", () => this.openStats()],
+      ["🏅", () => this.openLeaderboard()],
+    ];
+    topButtons.forEach(([icon, onTap], i) => {
+      textButton(this, 70 + i * 94, 56, icon, { text: "#8a93a8", background: "#181d2b" }, onTap, "26px");
+    });
     textButton(
       this,
-      110,
+      width - 70,
       56,
-      "📖 GUIDE",
+      "⚙",
       { text: "#8a93a8", background: "#181d2b" },
-      () => this.openEncyclopedia(),
+      () => this.openSettings(),
       "26px",
     );
 
-    // Dev-only god mode toggle (never rendered off the Vite dev server).
-    if (godModeAvailable()) {
-      const on = storage.get("godMode", false);
-      textButton(
-        this,
-        width - 120,
-        56,
-        on ? "⚡ GOD: ON" : "⚡ GOD: OFF",
-        on
-          ? { text: "#ffd54f", background: "#3a2f10" }
-          : { text: "#5c667d", background: "#181d2b" },
-        () => {
-          storage.set("godMode", !on);
-          this.scene.restart(); // re-reads progress → selection re-clamps
-        },
-        "26px",
-      );
-    }
-
     this.add
-      .text(width / 2, height * 0.2, "CUBE\nDASH", {
+      .text(width / 2, height * 0.2, "DASH THE\nCUBE", {
         fontFamily: "Arial Black, sans-serif",
         fontSize: "110px",
         color: "#ffffff",
@@ -93,6 +235,7 @@ export class MenuScene extends Phaser.Scene {
         strokeThickness: 10,
       })
       .setOrigin(0.5)
+      .setLetterSpacing(6)
       .setShadow(0, 10, "#000000", 12, false, true);
 
     this.levelWord = this.add
@@ -176,7 +319,10 @@ export class MenuScene extends Phaser.Scene {
         fontSize: "32px",
         color: "#ffffff",
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true });
+    // Tapping the name (or the ⊞ button) opens the full character grid.
+    this.charName.on("pointerdown", () => this.openCharacterGrid());
     const savedId = storage.get("character", "dash");
     this.charIndex = Math.max(0, CHARACTERS.findIndex((c) => c.id === savedId));
     textButton(this, width / 2 - 160, height * 0.85, "◀", { text: "#ffffff", background: "#232b3e" }, () => {
@@ -187,15 +333,23 @@ export class MenuScene extends Phaser.Scene {
       this.charIndex = (this.charIndex + 1) % CHARACTERS.length;
       this.refreshCharacter();
     }, "40px");
+    textButton(this, width / 2 + 250, height * 0.85, "⊞", { text: "#8a93a8", background: "#181d2b" }, () => {
+      this.openCharacterGrid();
+    }, "34px");
 
     this.refresh();
     this.refreshCharacter();
   }
 
+  /** A character is selectable once its world is cleared — or in god mode. */
+  private characterAvailable(spec: CharacterSpec): boolean {
+    return godModeOn() || isCharacterUnlocked(spec, storage.get("unlockedLevel", 1));
+  }
+
   private refreshCharacter(): void {
     const { width, height } = this.scale;
     const spec = CHARACTERS[this.charIndex]!;
-    const unlocked = isCharacterUnlocked(spec, storage.get("unlockedLevel", 1));
+    const unlocked = this.characterAvailable(spec);
 
     this.charPreview?.destroy();
     this.charPreview = this.add
@@ -208,11 +362,72 @@ export class MenuScene extends Phaser.Scene {
       this.charName.setText(spec.name).setColor(hex);
       // Browsing an unlocked character selects it immediately.
       storage.set("character", spec.id);
+      this.buildAttract(); // demo runner wears the newly picked skin
     } else {
       this.charName
-        .setText(`🔒 ${spec.name} — clear level ${spec.minLevel - 1}`)
+        .setText(`🔒 ${spec.name} — clear World ${spec.world}`)
         .setColor("#5c667d");
     }
+  }
+
+  /**
+   * Full character-select grid: every skin with a live preview, locked ones
+   * dimmed and captioned with the world that unlocks them. Tapping an
+   * available skin equips it and closes. God mode unlocks all.
+   */
+  private openCharacterGrid(): void {
+    const { width } = this.scale;
+    const overlay = this.buildOverlay("CHARACTERS");
+    const cols = 5;
+    const cellW = 138;
+    const cellH = 152;
+    const startX = width / 2 - ((cols - 1) * cellW) / 2;
+    const startY = 296;
+    const currentId = storage.get("character", "dash");
+
+    CHARACTERS.forEach((spec, i) => {
+      const cx = startX + (i % cols) * cellW;
+      const cy = startY + Math.floor(i / cols) * cellH;
+      const available = this.characterAvailable(spec);
+      const isCurrent = spec.id === currentId;
+
+      const tile = this.add
+        .rectangle(cx, cy, 124, 138, available ? 0x161d2e : 0x11141d)
+        .setStrokeStyle(3, isCurrent ? spec.color : available ? 0x2a3350 : 0x242a38);
+      overlay.add(tile);
+
+      // Live preview (small), dimmed while locked (no aura, to keep it clean).
+      const preview = this.add
+        .container(cx, cy - 16, buildCharacterParts(this, spec, 48))
+        .setAlpha(available ? 1 : 0.3);
+      if (available) attachAura(this, preview, spec, 48);
+      overlay.add(preview);
+
+      const caption = available ? spec.name : `🔒 World ${spec.world}`;
+      overlay.add(
+        this.add
+          .text(cx, cy + 50, caption, {
+            fontFamily: available ? "Arial Black, sans-serif" : "Arial, sans-serif",
+            fontSize: available ? "18px" : "16px",
+            color: available ? `#${spec.color.toString(16).padStart(6, "0")}` : "#5c667d",
+            align: "center",
+          })
+          .setOrigin(0.5),
+      );
+      if (isCurrent) {
+        overlay.add(this.add.text(cx + 48, cy - 54, "✓", { fontSize: "22px", color: "#a5d6a7" }).setOrigin(0.5));
+      }
+
+      if (available) {
+        tile.setInteractive({ useHandCursor: true });
+        tile.on("pointerdown", () => {
+          storage.set("character", spec.id);
+          this.charIndex = i;
+          overlay.destroy();
+          this.refreshCharacter();
+        });
+      }
+    });
   }
 
   /** Overlay grid to jump straight to any unlocked level. */
@@ -323,19 +538,99 @@ export class MenuScene extends Phaser.Scene {
   }
 
   /**
-   * Overlay listing every obstacle kind in unlock order, with live art from
-   * obstacleView. Kinds beyond the player's progress show as "???" teasers
-   * (god mode reveals everything, like it unlocks every level).
+   * All guide rows — hazards, power-ups, boosters, gates — in unlock order
+   * per category, each with its live-art preview builder. Entries beyond the
+   * player's progress render as "???" teasers (god mode reveals everything).
    */
+  private guideEntries(): Array<{
+    category: GuideCategory;
+    name: string;
+    blurb: string;
+    tag: string;
+    lockText: string;
+    unlockLevel: number;
+    w: number;
+    h: number;
+    color: string;
+    build: () => Phaser.GameObjects.Container;
+  }> {
+    const hexOf = (c: number): string => `#${c.toString(16).padStart(6, "0")}`;
+    const entries: ReturnType<MenuScene["guideEntries"]> = [];
+    // Hazards, in unlock order.
+    for (const [kind, lvl] of (Object.entries(KIND_UNLOCK_LEVEL) as Array<[ObstacleKind, number]>).sort(
+      (a, b) => a[1] - b[1],
+    )) {
+      const worldN = Math.floor((lvl - 1) / LEVELS_PER_WORLD) + 1;
+      const spec = OBSTACLE_PREVIEW[kind];
+      entries.push({
+        category: "hazards",
+        ...OBSTACLE_INFO[kind],
+        tag: `world ${worldN}`,
+        lockText: `Reach world ${worldN} to identify this hazard.`,
+        unlockLevel: lvl,
+        w: spec.w,
+        h: kind === "pit" ? spec.h + 150 : spec.h, // trench digs down
+        color: hexOf(levelColor(lvl)),
+        build: () => buildObstaclePreview(this, kind),
+      });
+    }
+    // Power-up pickups.
+    for (const [kind, lvl] of Object.entries(POWERUP_UNLOCK_LEVEL) as Array<[PowerUpKind, number]>) {
+      entries.push({
+        category: "powerups",
+        ...POWERUP_INFO[kind],
+        tag: `level ${lvl}`,
+        lockText: `Reach level ${lvl} to unlock this pickup.`,
+        unlockLevel: lvl,
+        w: 56,
+        h: 56,
+        color: hexOf(POWER_UPS[kind].color),
+        build: () => this.add.container(0, 0, [buildPickupView(this, kind).setPosition(28, 28)]),
+      });
+    }
+    // Launch pads and dash strips.
+    const boostUnlocks: Array<[BoostKind, number]> = [["pad", PAD_MIN_LEVEL], ["strip", STRIP_MIN_LEVEL]];
+    for (const [kind, lvl] of boostUnlocks) {
+      const { w, h } = BOOST_PREVIEW[kind];
+      entries.push({
+        category: "boosters",
+        ...BOOST_INFO[kind],
+        tag: `level ${lvl}`,
+        lockText: `Reach level ${lvl} to meet this booster.`,
+        unlockLevel: lvl,
+        w,
+        h,
+        color: kind === "pad" ? "#ffb300" : "#00e5ff",
+        build: () => buildBoostView(this, kind),
+      });
+    }
+    // Mirror / gravity gates.
+    const zoneUnlocks: Array<[TrackZoneKind, number]> = [["mirror", MIRROR_MIN_LEVEL], ["flip", FLIP_MIN_LEVEL]];
+    for (const [kind, lvl] of zoneUnlocks) {
+      entries.push({
+        category: "gates",
+        ...ZONE_INFO[kind],
+        tag: `level ${lvl}`,
+        lockText: `Reach level ${lvl} to pass through one.`,
+        unlockLevel: lvl,
+        w: ZONE_GATE_SIZE.w,
+        h: ZONE_GATE_SIZE.h,
+        color: hexOf(ZONE_COLORS[kind]),
+        build: () => buildZoneGateView(this, kind),
+      });
+    }
+    return entries;
+  }
+
   private openEncyclopedia(): void {
     const { width, height } = this.scale;
     const unlocked = this.unlockedLevel();
-    const kinds = (Object.entries(KIND_UNLOCK_LEVEL) as Array<[ObstacleKind, number]>).sort(
-      (a, b) => a[1] - b[1],
-    );
+    const all = this.guideEntries();
     const perPage = 5;
-    const pages = Math.ceil(kinds.length / perPage);
+    let category: GuideCategory = "hazards";
     let page = 0;
+    const current = (): typeof all => all.filter((e) => e.category === category);
+    const pages = (): number => Math.max(1, Math.ceil(current().length / perPage));
 
     const overlay = this.add.container(0, 0).setDepth(100);
     overlay.add(
@@ -343,7 +638,7 @@ export class MenuScene extends Phaser.Scene {
     );
     overlay.add(
       this.add
-        .text(width / 2, 150, "OBSTACLES", {
+        .text(width / 2, 130, "GUIDE", {
           fontFamily: "Arial Black, sans-serif",
           fontSize: "52px",
           color: "#ffffff",
@@ -351,6 +646,35 @@ export class MenuScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setShadow(0, 6, "#000000", 8, false, true),
     );
+
+    // Clickable category tabs — rebuilt on switch so the active one lights up.
+    const tabs = this.add.container(0, 0);
+    overlay.add(tabs);
+    const renderTabs = (): void => {
+      tabs.removeAll(true);
+      for (const cat of GUIDE_CATEGORIES) {
+        const active = cat.id === category;
+        tabs.add(
+          textButton(
+            this,
+            cat.x,
+            222,
+            cat.label,
+            active
+              ? { text: "#12141c", background: "#8a93a8" }
+              : { text: "#8a93a8", background: "#181d2b" },
+            () => {
+              if (category === cat.id) return;
+              category = cat.id;
+              page = 0;
+              renderTabs();
+              renderPage();
+            },
+            "22px",
+          ),
+        );
+      }
+    };
     const rows = this.add.container(0, 0);
     overlay.add(rows);
     const pageText = this.add
@@ -364,11 +688,9 @@ export class MenuScene extends Phaser.Scene {
 
     const renderPage = (): void => {
       rows.removeAll(true);
-      kinds.slice(page * perPage, (page + 1) * perPage).forEach(([kind, lvl], i) => {
-        const y = 320 + i * 168;
-        const worldN = Math.floor((lvl - 1) / LEVELS_PER_WORLD) + 1;
-        const isKnown = lvl <= unlocked;
-        const info = OBSTACLE_INFO[kind];
+      current().slice(page * perPage, (page + 1) * perPage).forEach((e, i) => {
+        const y = 340 + i * 168;
+        const isKnown = e.unlockLevel <= unlocked;
 
         rows.add(
           this.add
@@ -377,28 +699,26 @@ export class MenuScene extends Phaser.Scene {
         );
 
         // Live-art preview, scaled to fit the left column of the card.
-        const spec = OBSTACLE_PREVIEW[kind];
-        const visualH = kind === "pit" ? spec.h + 150 : spec.h; // trench digs down
-        const scale = Math.min(1, 116 / visualH, 150 / spec.w);
-        const pv = buildObstaclePreview(this, kind)
+        const scale = Math.min(1, 116 / e.h, 150 / e.w);
+        const pv = e
+          .build()
           .setScale(scale)
-          .setPosition(130 - (spec.w * scale) / 2, y - (visualH * scale) / 2);
+          .setPosition(130 - (e.w * scale) / 2, y - (e.h * scale) / 2);
         if (!isKnown) pv.setAlpha(0.15);
         rows.add(pv);
 
-        const hex = `#${levelColor(lvl).toString(16).padStart(6, "0")}`;
         rows.add(
           this.add
-            .text(240, y - 56, isKnown ? info.name : "???", {
+            .text(240, y - 56, isKnown ? e.name : "???", {
               fontFamily: "Arial Black, sans-serif",
               fontSize: "32px",
-              color: isKnown ? hex : "#5c667d",
+              color: isKnown ? e.color : "#5c667d",
             })
             .setOrigin(0, 0.5),
         );
         rows.add(
           this.add
-            .text(668, y - 56, `world ${worldN}`, {
+            .text(668, y - 56, e.tag, {
               fontFamily: "Arial, sans-serif",
               fontSize: "24px",
               color: "#5c667d",
@@ -406,7 +726,7 @@ export class MenuScene extends Phaser.Scene {
             .setOrigin(1, 0.5),
         );
         rows.add(
-          this.add.text(240, y - 34, isKnown ? info.blurb : `Reach world ${worldN} to identify this hazard.`, {
+          this.add.text(240, y - 34, isKnown ? e.blurb : e.lockText, {
             fontFamily: "Arial, sans-serif",
             fontSize: "23px",
             color: isKnown ? "#aab3c7" : "#5c667d",
@@ -415,23 +735,21 @@ export class MenuScene extends Phaser.Scene {
           }),
         );
       });
-      pageText.setText(pages > 1 ? `page ${page + 1} / ${pages}` : "");
+      pageText.setText(pages() > 1 ? `page ${page + 1} / ${pages()}` : "");
     };
 
-    if (pages > 1) {
-      overlay.add(
-        textButton(this, width / 2 - 150, height - 165, "◀", { text: "#ffffff", background: "#232b3e" }, () => {
-          page = Math.max(0, page - 1);
-          renderPage();
-        }, "32px"),
-      );
-      overlay.add(
-        textButton(this, width / 2 + 150, height - 165, "▶", { text: "#ffffff", background: "#232b3e" }, () => {
-          page = Math.min(pages - 1, page + 1);
-          renderPage();
-        }, "32px"),
-      );
-    }
+    overlay.add(
+      textButton(this, width / 2 - 150, height - 165, "◀", { text: "#ffffff", background: "#232b3e" }, () => {
+        page = Math.max(0, page - 1);
+        renderPage();
+      }, "32px"),
+    );
+    overlay.add(
+      textButton(this, width / 2 + 150, height - 165, "▶", { text: "#ffffff", background: "#232b3e" }, () => {
+        page = Math.min(pages() - 1, page + 1);
+        renderPage();
+      }, "32px"),
+    );
     overlay.add(
       textButton(
         this,
@@ -443,11 +761,347 @@ export class MenuScene extends Phaser.Scene {
         "34px",
       ),
     );
+    renderTabs();
     renderPage();
+  }
+
+  /** World-themed backdrop with a slow parallax skyline and a demo runner. */
+  private buildAttract(): void {
+    const { width, height } = this.scale;
+    const world = worldForLevel(this.selected);
+    this.attractWorldId = world.id;
+    this.attract?.destroy();
+    const c = this.add.container(0, 0).setDepth(-10);
+    this.attract = c;
+    ensureWorldTextures(this, world);
+
+    const sky = this.add.graphics();
+    sky.fillGradientStyle(world.skyTop, world.skyTop, world.skyBottomA, world.skyBottomB, 1);
+    sky.fillRect(0, 0, width, height);
+    const stars = this.add.graphics();
+    for (let i = 0; i < 42; i++) {
+      // Cheap deterministic scatter — no rng needed for set dressing.
+      const sx = (i * 131 + 37) % width;
+      const sy = (i * 337 + 91) % height;
+      stars.fillStyle(0xffffff, 0.05 + ((i * 53) % 20) / 200);
+      stars.fillRect(sx, sy, 2 + (i % 2), 2 + (i % 2));
+    }
+    c.add([sky, stars]);
+
+    const sil = this.add
+      .tileSprite(0, height - 346, width, 320, `sil-${world.id}`)
+      .setOrigin(0)
+      .setAlpha(0.3);
+    c.add(sil);
+    this.tweens.add({ targets: sil, tilePositionX: 400, duration: 18000, repeat: -1 });
+    const haze = this.add.graphics();
+    haze.fillGradientStyle(world.haze, world.haze, world.haze, world.haze, 0, 0, 0.4, 0.4);
+    haze.fillRect(0, height - 346, width, 320);
+    c.add(haze);
+
+    // Demo runner hopping along the very bottom edge.
+    const groundY = height - 26;
+    c.add(this.add.rectangle(0, groundY, width, 26, world.groundBase).setOrigin(0));
+    c.add(
+      this.add.rectangle(0, groundY - 3, width, 3, levelColor(this.selected)).setOrigin(0).setAlpha(0.6),
+    );
+    const spec = characterById(storage.get("character", "dash"));
+    const cube = this.add.container(width * 0.22, groundY - 22, buildCharacterParts(this, spec, 44));
+    cube.setScale(0.85);
+    // Demo runner previews the skin's signature trail too.
+    const trail = buildCharacterTrail(this, cube, spec, 0.7, 220);
+    trail.emitting = true;
+    c.add(trail);
+    c.add(cube);
+    this.tweens.add({
+      targets: cube,
+      y: groundY - 140,
+      duration: 380,
+      yoyo: true,
+      repeat: -1,
+      ease: "Quad.easeOut",
+      delay: 400,
+      repeatDelay: 950,
+    });
+    this.tweens.add({
+      targets: cube,
+      angle: 360,
+      duration: 760,
+      repeat: -1,
+      delay: 400,
+      repeatDelay: 950,
+    });
+  }
+
+  /** Full-screen overlay scaffold shared by the trophy and stats pages. */
+  private buildOverlay(title: string): Phaser.GameObjects.Container {
+    const { width, height } = this.scale;
+    const overlay = this.add.container(0, 0).setDepth(100);
+    overlay.add(
+      this.add.rectangle(0, 0, width, height, 0x0b0e18, 0.95).setOrigin(0).setInteractive(),
+    );
+    overlay.add(
+      this.add
+        .text(width / 2, 150, title, {
+          fontFamily: "Arial Black, sans-serif",
+          fontSize: "52px",
+          color: "#ffffff",
+        })
+        .setOrigin(0.5)
+        .setShadow(0, 6, "#000000", 8, false, true),
+    );
+    overlay.add(
+      textButton(
+        this,
+        width / 2,
+        height - 80,
+        "✕  CLOSE",
+        { text: "#ef9a9a", background: "#331e1e" },
+        () => overlay.destroy(),
+        "34px",
+      ),
+    );
+    return overlay;
+  }
+
+  /**
+   * 🏅 Leaderboards: LEVEL tab (fastest clears per level, with a ◀ n ▶
+   * selector) and OVERALL tab (highest level reached, ties by total time).
+   * All loads are async with stale-guarding; when Firebase isn't configured
+   * the overlay degrades to a friendly notice.
+   */
+  private openLeaderboard(): void {
+    const { width } = this.scale;
+    const overlay = this.buildOverlay("LEADERBOARD");
+    const lb = leaderboard();
+    void lb.syncDirty();
+
+    // Player identity row.
+    const nameText = this.add
+      .text(width / 2 - 40, 205, lb.getName(), {
+        fontFamily: "Arial Black, sans-serif",
+        fontSize: "30px",
+        color: "#80deea",
+      })
+      .setOrigin(0.5);
+    overlay.add(nameText);
+    overlay.add(
+      textButton(
+        this,
+        width / 2 + 170,
+        205,
+        "✏",
+        { text: "#8a93a8", background: "#181d2b" },
+        () => {
+          const entered = window.prompt("Leaderboard name (3-20 characters):", lb.getName());
+          if (entered && validName(entered)) {
+            void lb.setName(entered);
+            nameText.setText(entered.trim());
+          }
+        },
+        "22px",
+      ),
+    );
+
+    let tab: "level" | "overall" = "level";
+    let level = this.selected;
+    let loadToken = 0;
+    const tabs = this.add.container(0, 0);
+    const body = this.add.container(0, 0);
+    const status = this.add
+      .text(width / 2, 620, "", {
+        fontFamily: "Arial, sans-serif",
+        fontSize: "30px",
+        color: "#8a93a8",
+      })
+      .setOrigin(0.5);
+    overlay.add([tabs, body, status]);
+
+    const renderTabs = (): void => {
+      tabs.removeAll(true);
+      for (const [id, label, x] of [["level", "LEVEL", width / 2 - 150], ["overall", "OVERALL", width / 2 + 150]] as const) {
+        const active = tab === id;
+        tabs.add(
+          textButton(
+            this,
+            x,
+            278,
+            label,
+            active
+              ? { text: "#12141c", background: "#8a93a8" }
+              : { text: "#8a93a8", background: "#181d2b" },
+            () => {
+              if (tab === id) return;
+              tab = id;
+              renderTabs();
+              void render();
+            },
+            "26px",
+          ),
+        );
+      }
+    };
+
+    const rowStyle = (own: boolean): Phaser.Types.GameObjects.Text.TextStyle => ({
+      fontFamily: own ? "Arial Black, sans-serif" : "Arial, sans-serif",
+      fontSize: "28px",
+      color: own ? "#80deea" : "#c6cede",
+    });
+
+    const render = async (): Promise<void> => {
+      const token = ++loadToken;
+      body.removeAll(true);
+      if (!lb.ready) {
+        status.setText("Leaderboard not configured yet");
+        return;
+      }
+      status.setText("connecting…");
+
+      if (tab === "level") {
+        // Level selector row (part of the body so it clears on tab switch).
+        const label = this.add
+          .text(width / 2, 350, `LEVEL ${level}`, {
+            fontFamily: "Arial Black, sans-serif",
+            fontSize: "34px",
+            color: `#${levelColor(level).toString(16).padStart(6, "0")}`,
+          })
+          .setOrigin(0.5);
+        body.add(label);
+        body.add(
+          textButton(this, width / 2 - 190, 350, "◀", { text: "#ffffff", background: "#232b3e" }, () => {
+            level = Math.max(1, level - 1);
+            void render();
+          }, "24px"),
+        );
+        body.add(
+          textButton(this, width / 2 + 190, 350, "▶", { text: "#ffffff", background: "#232b3e" }, () => {
+            level = Math.min(100, level + 1);
+            void render();
+          }, "24px"),
+        );
+      }
+
+      try {
+        if (tab === "level") {
+          const entries = await lb.topLevel(level, 12);
+          if (token !== loadToken || !overlay.active) return;
+          status.setText(entries.length === 0 ? "no times yet — set one!" : "");
+          entries.forEach((e, i) => {
+            const own = e.uid === lb.myUid();
+            const y = 420 + i * 52;
+            body.add(this.add.text(120, y, `${i + 1}.`, rowStyle(own)).setOrigin(0, 0.5));
+            body.add(
+              this.add.text(185, y, own ? `${e.name} — you` : e.name, rowStyle(own)).setOrigin(0, 0.5),
+            );
+            body.add(this.add.text(width - 110, y, formatTimeMs(e.timeMs), rowStyle(own)).setOrigin(1, 0.5));
+          });
+        } else {
+          const entries = await lb.topOverall(12);
+          if (token !== loadToken || !overlay.active) return;
+          status.setText(entries.length === 0 ? "no runs yet — be the first!" : "");
+          entries.forEach((e, i) => {
+            const own = e.uid === lb.myUid();
+            const y = 370 + i * 52;
+            body.add(this.add.text(100, y, `${i + 1}.`, rowStyle(own)).setOrigin(0, 0.5));
+            body.add(
+              this.add.text(165, y, own ? `${e.name} — you` : e.name, rowStyle(own)).setOrigin(0, 0.5),
+            );
+            body.add(this.add.text(width - 250, y, `L${e.highestLevel}`, rowStyle(own)).setOrigin(1, 0.5));
+            body.add(
+              this.add.text(width - 100, y, formatTimeMs(e.totalTimeMs), rowStyle(own)).setOrigin(1, 0.5),
+            );
+          });
+        }
+      } catch {
+        if (token !== loadToken || !overlay.active) return;
+        status.setText("offline — try again later");
+      }
+    };
+
+    renderTabs();
+    void render();
+  }
+
+  private openTrophies(): void {
+    const { width } = this.scale;
+    const overlay = this.buildOverlay("TROPHIES");
+    const earnedCount = ACHIEVEMENTS.filter((a) => isEarned(storage, a.id)).length;
+    overlay.add(
+      this.add
+        .text(width / 2, 210, `${earnedCount} / ${ACHIEVEMENTS.length} earned`, {
+          fontFamily: "Arial, sans-serif",
+          fontSize: "28px",
+          color: "#8a93a8",
+        })
+        .setOrigin(0.5),
+    );
+    ACHIEVEMENTS.forEach((a, i) => {
+      const y = 300 + i * 66;
+      const earned = isEarned(storage, a.id);
+      overlay.add(
+        this.add
+          .text(90, y, earned ? "🏆" : "🔒", { fontSize: "30px" })
+          .setOrigin(0.5),
+      );
+      overlay.add(
+        this.add.text(130, y - 16, a.name, {
+          fontFamily: "Arial Black, sans-serif",
+          fontSize: "26px",
+          color: earned ? "#ffd54f" : "#5c667d",
+        }),
+      );
+      overlay.add(
+        this.add.text(130, y + 12, a.desc, {
+          fontFamily: "Arial, sans-serif",
+          fontSize: "21px",
+          color: earned ? "#aab3c7" : "#4a5266",
+        }),
+      );
+    });
+  }
+
+  private openStats(): void {
+    const { width } = this.scale;
+    const overlay = this.buildOverlay("STATS");
+    const playMs = storage.get("totalPlayMs", 0);
+    const hours = Math.floor(playMs / 3_600_000);
+    const mins = Math.floor((playMs % 3_600_000) / 60_000);
+    let cleared = 0;
+    for (let lvl = 1; lvl <= 100; lvl++) {
+      if (storage.get(`bestPct:${lvl}`, 0) >= 100) cleared++;
+    }
+    const rows: Array<[string, string]> = [
+      ["Levels cleared", `${cleared}`],
+      ["Total attempts", `${storage.get("totalAttempts", 0)}`],
+      ["Total crashes", `${storage.get("totalDeaths", 0)}`],
+      ["Distance run", `${storage.get("totalMeters", 0).toLocaleString()}m`],
+      ["Near-misses", `${storage.get("nearMisses", 0)}`],
+      ["Play time", `${hours}h ${mins}m`],
+      ["Trophies", `${ACHIEVEMENTS.filter((a) => isEarned(storage, a.id)).length} / ${ACHIEVEMENTS.length}`],
+    ];
+    rows.forEach(([label, value], i) => {
+      const y = 330 + i * 92;
+      overlay.add(
+        this.add.text(110, y, label, {
+          fontFamily: "Arial, sans-serif",
+          fontSize: "34px",
+          color: "#8a93a8",
+        }).setOrigin(0, 0.5),
+      );
+      overlay.add(
+        this.add.text(width - 110, y, value, {
+          fontFamily: "Arial Black, sans-serif",
+          fontSize: "36px",
+          color: "#ffffff",
+        }).setOrigin(1, 0.5),
+      );
+    });
   }
 
   private refresh(): void {
     const unlocked = this.unlockedLevel();
+    // Backdrop follows the selected level's world.
+    if (worldForLevel(this.selected).id !== this.attractWorldId) this.buildAttract();
     const hex = `#${levelColor(this.selected).toString(16).padStart(6, "0")}`;
     this.levelWord.setColor(hex);
     this.levelLabel.setText(`${this.selected}`).setColor(hex);
@@ -456,6 +1110,7 @@ export class MenuScene extends Phaser.Scene {
     const cleared = best >= 100;
     this.levelInfo.setText(
       `${worldForLevel(this.selected).name}  ·  ${levelDurationSec(this.selected)}s` +
+        (isFinaleLevel(this.selected) ? "  ·  ★ FINALE" : "") +
         (best > 0 ? `  ·  ${cleared ? "✓ cleared" : `best ${best}%`}` : ""),
     );
     this.lockHint.setText(

@@ -1,0 +1,105 @@
+rules_version = '2';
+
+// ONE ruleset for the whole shared Firebase project (dash-937de): every
+// `deploy --only firestore` replaces ALL rules, so this file is the single
+// source of truth for every game. All data lives under games/{game}/... —
+// one namespace per game — and anything outside a match below is denied.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    function validName() {
+      return request.resource.data.name is string
+        && request.resource.data.name.size() >= 3
+        && request.resource.data.name.size() <= 20;
+    }
+
+    function validAt() {
+      return request.resource.data.at is number;
+    }
+
+    // ---- Generic per-game collections (any game) ----
+
+    // Player profiles: public read; owner-only create/update; no delete.
+    match /games/{game}/players/{uid} {
+      allow read: if true;
+      allow create, update: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(['name'])
+        && validName();
+    }
+
+    // Single higher-is-better leaderboard for simple games (block-blast
+    // score, merge-2048 score, flap-dash meters, word-rush streak):
+    // one doc per player, score only ever increases.
+    match /games/{game}/scores/{uid} {
+      function validScore() {
+        return request.resource.data.keys().hasOnly(['name', 'score', 'at'])
+          && validName()
+          && validAt()
+          && request.resource.data.score is number
+          && request.resource.data.score >= 0;
+      }
+      allow read: if true;
+      allow create: if isOwner(uid) && validScore();
+      allow update: if isOwner(uid) && validScore()
+        && request.resource.data.score >= resource.data.score;
+    }
+
+    // Private cloud saves (@mg/cloudsave): one doc per player per game,
+    // owner-only in BOTH directions (progress isn't public), flat
+    // { data: map, at: number } shape. Garbage inside data only ever hurts
+    // its owner; leaderboard standings are validated separately above.
+    match /games/{game}/saves/{uid} {
+      allow read: if isOwner(uid);
+      allow create, update: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(['data', 'at'])
+        && request.resource.data.data is map
+        && validAt();
+    }
+
+    // ---- cube-dash bespoke boards ----
+
+    // Per-level best clear times: one doc per player per level; times only
+    // ever improve (decrease). Floor: level duration is 30s in world 1 and
+    // +15s per world (5 levels each), so duration >= (15 + 3*level) seconds
+    // (a division-free bound, exact at world-end levels); pad flights
+    // compress elapsed time by at most ~3.23x, so duration/4 — i.e.
+    // (15 + 3*level) * 250 ms — is a hard lower bound for a real clear.
+    match /games/cube-dash/levels/{level}/scores/{uid} {
+      function validTime() {
+        return int(level) >= 1 && int(level) <= 1000
+          && request.resource.data.keys().hasOnly(['name', 'timeMs', 'at'])
+          && validName()
+          && validAt()
+          && request.resource.data.timeMs is number
+          && request.resource.data.timeMs > (15 + 3 * int(level)) * 250;
+      }
+      allow read: if true;
+      allow create: if isOwner(uid) && validTime();
+      allow update: if isOwner(uid) && validTime()
+        && request.resource.data.timeMs <= resource.data.timeMs;
+    }
+
+    // Overall standing: highest cleared level (monotonic) + total best time
+    // (may move either way: improvements shrink it, new clears add to it).
+    match /games/cube-dash/overall/{uid} {
+      function validOverall() {
+        return request.resource.data.keys().hasOnly(['name', 'highestLevel', 'totalTimeMs', 'at'])
+          && validName()
+          && validAt()
+          && request.resource.data.highestLevel is int
+          && request.resource.data.highestLevel >= 1
+          && request.resource.data.highestLevel <= 1000
+          && request.resource.data.totalTimeMs is number
+          && request.resource.data.totalTimeMs >= 0;
+      }
+      allow read: if true;
+      allow create: if isOwner(uid) && validOverall();
+      allow update: if isOwner(uid) && validOverall()
+        && request.resource.data.highestLevel >= resource.data.highestLevel;
+    }
+  }
+}
