@@ -174,7 +174,12 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    try. KINDS_WITH_PHASE
                    set (now incl. wisp/flux/pendul/cyclone/specter/nova)
                    drives seeded phase assignment at spawn. MIRROR/FLIP
-                   ZONES: trackZones(level,lengthPx) (seeded levelSeed^0x51af,
+                   ZONES (2026-07-21: the scenery — sky/stars/silhouettes/
+                   haze — now lives in its own bgLayer container that gets
+                   the IDENTICAL reflection as trackLayer, so background +
+                   parallax reverse/flip with the world; flip coverage is
+                   exact: sky [0,1000]→[320,1320], ground strip →[0,320]):
+                   trackZones(level,lengthPx) (seeded levelSeed^0x51af,
                    separate from layout rng) → 1-2 "mirror" zones L41+ and
                    1-2 "flip" zones L61+, each 12-20% of length clamped
                    [1500,6000]px, sorted, ≥800px apart, ends ≥1600px before
@@ -253,7 +258,9 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    near-miss (nearMiss() = overlapsHazard pad 24 minus lethal,
                    tested; sparks+count on pass); death juice (80ms freeze
                    then burst/shake/zoom-punch) + squash&stretch (punchScale)
-                   + landing camera kick. PROGRESSION — src/achievements.ts
+                   (landing camera kick removed 2026-07-21 per user — the
+                   nudge read as world shake; landing feel is cube-only
+                   squash + dust now). PROGRESSION — src/achievements.ts
                    (13 pure-checked achievements over PlayerStats snapshot,
                    newlyEarned() grants + floatBanner toasts w/ depth 120;
                    trophy 🏆 + stats 📊 menu overlays; floatBanner gained a

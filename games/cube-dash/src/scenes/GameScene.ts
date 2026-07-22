@@ -10,7 +10,6 @@ import {
   GROUND_Y,
   KINDS_WITH_PHASE,
   MIRROR_MIN_LEVEL,
-  JUMP_VELOCITY,
   PAD_FLIGHT_SPEED_MUL,
   PAD_JUMP_VELOCITY,
   SLOWMO_MUL,
@@ -143,6 +142,8 @@ export class GameScene extends Phaser.Scene {
    * and layouts never change, only how they're presented.
    */
   private trackLayer!: Phaser.GameObjects.Container;
+  /** Scenery (sky/stars/silhouettes/haze) — mirrors/flips with the zones. */
+  private bgLayer!: Phaser.GameObjects.Container;
   /** Sub-container for spawned views (obstacles/pickups/finish/gates). */
   private trackObjects!: Phaser.GameObjects.Container;
   private zones: TrackZone[] = [];
@@ -231,8 +232,10 @@ export class GameScene extends Phaser.Scene {
     storage.set("totalAttempts", storage.get("totalAttempts", 0) + 1);
 
     this.ensureTextures();
-    // The track layer sits above the scenery (depths 0-3) and below the HUD
-    // (20+); children render in add order, so build order = draw order.
+    // The track layer sits above the scenery and below the HUD (20+);
+    // children render in add order, so build order = draw order. The
+    // scenery gets its own layer so zone mirror/flip carries it too.
+    this.bgLayer = this.add.container(0, 0).setDepth(0);
     this.trackLayer = this.add.container(0, 0).setDepth(4);
     this.buildBackground();
     this.buildPlayer();
@@ -452,7 +455,7 @@ export class GameScene extends Phaser.Scene {
   private buildBackground(): void {
     const accent = levelColor(this.levelNum);
 
-    const sky = this.add.graphics().setDepth(0);
+    const sky = this.add.graphics();
     sky.fillGradientStyle(this.world.skyTop, this.world.skyTop, this.world.skyBottomA, this.world.skyBottomB, 1);
     sky.fillRect(0, 0, WORLD_WIDTH, GROUND_Y);
 
@@ -460,12 +463,10 @@ export class GameScene extends Phaser.Scene {
     this.bgFar = this.add
       .tileSprite(0, 0, WORLD_WIDTH, GROUND_Y, "stars")
       .setOrigin(0)
-      .setDepth(1)
       .setAlpha(0.7);
     this.bgMid = this.add
       .tileSprite(0, GROUND_Y - 320, WORLD_WIDTH, 320, silKey)
       .setOrigin(0)
-      .setDepth(2)
       .setAlpha(0.55); // atmospheric haze pushes the silhouette into the distance
     // Extra depth layer appears as the levels progress.
     this.bgMid2 = null;
@@ -474,14 +475,23 @@ export class GameScene extends Phaser.Scene {
       this.bgMid2 = this.add
         .tileSprite(0, GROUND_Y - 545, WORLD_WIDTH, 224, silKey)
         .setOrigin(0)
-        .setDepth(1)
         .setAlpha(0.3);
       this.bgMid2.setTileScale(0.7);
     }
 
-    const haze = this.add.graphics().setDepth(3);
+    const haze = this.add.graphics();
     haze.fillGradientStyle(this.world.haze, this.world.haze, this.world.haze, this.world.haze, 0, 0, 0.35, 0.35);
     haze.fillRect(0, GROUND_Y - 320, WORLD_WIDTH, 320);
+
+    // Whole scenery stack in one layer (paint order = old depth order 0-3)
+    // so zone mirror/flip transforms it in lockstep with the track.
+    this.bgLayer.add([
+      sky,
+      this.bgFar,
+      ...(this.bgMid2 ? [this.bgMid2] : []),
+      this.bgMid,
+      haze,
+    ]);
 
     this.groundTile = this.add
       .tileSprite(0, GROUND_Y, WORLD_WIDTH, WORLD_HEIGHT - GROUND_Y, `ground-${this.world.id}`)
@@ -808,7 +818,6 @@ export class GameScene extends Phaser.Scene {
 
     const obsList = this.obstacles.map((o) => o.obs);
     const wasAirborne = !this.runner.grounded;
-    const impactVy = this.runner.vy; // captured before landing zeroes it
     stepRunner(this.runner, simDt, supportAt(this.runner.y, obsList));
     if (this.runner.grounded && this.padFlight) {
       // Flight ends on touchdown, with a short grace to clear the landing.
@@ -824,19 +833,9 @@ export class GameScene extends Phaser.Scene {
     if (this.runner.grounded && wasAirborne) {
       this.playerView.rotation = Math.round(this.playerView.rotation / (Math.PI / 2)) * (Math.PI / 2);
       this.dust.explode(6, this.playerView.x, this.runner.y - 4);
-      // Landing feel: the cube squashes on every landing, but the camera
-      // only kicks on HARD impacts (pad-launch touchdowns) — a routine
-      // jump landing shaking the screen reads as the ground wobbling.
+      // Landing feel lives on the CUBE only (squash + dust) — camera kicks
+      // on landings read as the world wobbling and were removed per user.
       this.punchScale(1.18, 0.82);
-      if (impactVy > -JUMP_VELOCITY * 1.1) {
-        this.tweens.add({
-          targets: this.cameras.main,
-          scrollY: 4,
-          duration: 45,
-          yoyo: true,
-          ease: "Sine.easeOut",
-        });
-      }
       if (this.jumpBufferMs > 0) {
         jump(this.runner);
         sfx.place();
@@ -916,8 +915,12 @@ export class GameScene extends Phaser.Scene {
     const kind = zoneKindAt(this.distancePx, this.zones);
     if (kind === this.activeZone) return;
     this.activeZone = kind;
-    this.trackLayer.setScale(kind === "mirror" ? -1 : 1, kind === "flip" ? -1 : 1);
-    this.trackLayer.setPosition(kind === "mirror" ? WORLD_WIDTH : 0, kind === "flip" ? FLIP_PIVOT_Y * 2 : 0);
+    // Track AND scenery share the reflection, so the whole world reverses/
+    // flips together (background parallax streams the mirrored way too).
+    for (const layer of [this.trackLayer, this.bgLayer]) {
+      layer.setScale(kind === "mirror" ? -1 : 1, kind === "flip" ? -1 : 1);
+      layer.setPosition(kind === "mirror" ? WORLD_WIDTH : 0, kind === "flip" ? FLIP_PIVOT_Y * 2 : 0);
+    }
     const c = Phaser.Display.Color.IntegerToColor(kind ? ZONE_COLORS[kind] : 0xffffff);
     this.cameras.main.flash(220, c.red, c.green, c.blue);
     sfx.clear(kind ? 2 : 1);
