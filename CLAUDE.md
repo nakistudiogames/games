@@ -153,25 +153,27 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    480)) — grounded before reaching the player), reaper L96
                    (60x90 scythe sweeping via reaperActive). AIR HAZARDS
                    (2026-07-21): SECOND unlock cadence — AIR_KINDS set, one
-                   new floating hazard per 10 levels, all DEADLY TO JUMP
+                   new floating hazard per 10 levels STARTING AT L5
+                   (5,15,...,95; shifted from 10,20,...,100 same day per
+                   user — re-rolled layouts L5+), all DEADLY TO JUMP
                    INTO / SAFE TO RUN UNDER (band bottom ≥ AIR_BAND_MIN_ELEV
                    85, band top above the ~200 jump apex or too wide to
-                   clear over; both directions tested per kind): halo L10
-                   (static ring), wisp L20 (elev bobs 85-145, wispElev),
-                   lance L30 (200x26 spear @150 — airWindow < span), swarm
-                   L40 (3 orbs from ONE spec, SWARM_OFFSETS), flux L50
-                   (net, lethal half-duty fluxOn), pendul L60 (orb sweeps
-                   ±44 pendulShift), rails L70 (twin bars 85-125 + 165-230
-                   from one spec, no player-sized gap), cyclone L80 (funnel
-                   sways ±20 cycloneSway), specter L90 (solid/ghost
-                   specterSolid), nova L100 (core + orbiting satellite
+                   clear over; both directions tested per kind): halo L5
+                   (static ring), wisp L15 (elev bobs 85-145, wispElev),
+                   lance L25 (200x26 spear @150 — airWindow < span), swarm
+                   L35 (3 orbs from ONE spec, SWARM_OFFSETS), flux L45
+                   (net, lethal half-duty fluxOn), pendul L55 (orb sweeps
+                   ±44 pendulShift), rails L65 (twin bars 85-125 + 165-230
+                   from one spec, no player-sized gap), cyclone L75 (funnel
+                   sways ±20 cycloneSway), specter L85 (solid/ghost
+                   specterSolid), nova L95 (core + orbiting satellite
                    novaSatPos, sat bottom ≥ 88). Each has an intro pattern
                    at its exact unlock + a conservative combo (flanking
                    ground obstacles ≥ ~340px so no mandatory jump crosses a
                    band). The unlock-cadence test checks BOTH rules (world
-                   kinds on world starts, air kinds on multiples of 10, one
-                   per decade); bot cleared all 100 re-rolled levels first
-                   try. KINDS_WITH_PHASE
+                   kinds on world starts, air kinds at 5 past each multiple
+                   of 10, one per decade); bot cleared all 100 re-rolled
+                   levels first try, both cadences. KINDS_WITH_PHASE
                    set (now incl. wisp/flux/pendul/cyclone/specter/nova)
                    drives seeded phase assignment at spawn. MIRROR/FLIP
                    ZONES (2026-07-21: the scenery — sky/stars/silhouettes/

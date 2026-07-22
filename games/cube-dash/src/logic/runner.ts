@@ -49,14 +49,15 @@ export const COYOTE_MS = 90;
  * sweeping the track on a cycle) world 20.
  *
  * SECOND CADENCE — AIR HAZARDS (see AIR_KINDS): one new floating hazard
- * every 10 levels (L10..L100). All of them are DEADLY TO JUMP INTO and SAFE
- * TO RUN UNDER: kill-band bottom stays >= 85 (run-under clearance) while the
- * band reaches high/wide enough that a jump can't top it:
- * halo (static ring) L10, wisp (bobbing spirit orb) L20, lance (long thin
- * high spear) L30, swarm (trio of small orbs from one spec) L40, flux
- * (energy net, lethal half-duty) L50, pendul (orb sweeping sideways) L60,
- * rails (twin stacked bars from one spec) L70, cyclone (swaying funnel) L80,
- * specter (solid/ghost timing) L90, nova (orb + orbiting satellite) L100.
+ * every 10 levels starting at world 1's finale (L5, 15, 25, ... 95). All
+ * are DEADLY TO JUMP INTO and SAFE TO RUN UNDER: kill-band bottom stays
+ * >= 85 (run-under clearance) while the band reaches high/wide enough that
+ * a jump can't top it:
+ * halo (static ring) L5, wisp (bobbing spirit orb) L15, lance (long thin
+ * high spear) L25, swarm (trio of small orbs from one spec) L35, flux
+ * (energy net, lethal half-duty) L45, pendul (orb sweeping sideways) L55,
+ * rails (twin stacked bars from one spec) L65, cyclone (swaying funnel)
+ * L75, specter (solid/ghost timing) L85, nova (orb + satellite) L95.
  */
 export type ObstacleKind =
   | "spike"
@@ -307,7 +308,7 @@ export function novaSatPos(o: Obstacle): { dx: number; dy: number } {
 
 /**
  * The air-hazard kinds: second unlock cadence, one per 10 levels
- * (KIND_UNLOCK_LEVEL divisible by 10) — deadly to jump into, safe to run
+ * (KIND_UNLOCK_LEVEL = 5, 15, ... 95) — deadly to jump into, safe to run
  * under (both directions tested).
  */
 export const AIR_KINDS: ReadonlySet<ObstacleKind> = new Set([
@@ -416,16 +417,16 @@ export const KIND_UNLOCK_LEVEL: Record<ObstacleKind, number> = {
   comet: 1 + LEVELS_PER_WORLD * 18, // world 19
   reaper: 1 + LEVELS_PER_WORLD * 19, // world 20
   // Air hazards: second cadence, one per 10 levels (see AIR_KINDS).
-  halo: 10,
-  wisp: 20,
-  lance: 30,
-  swarm: 40,
-  flux: 50,
-  pendul: 60,
-  rails: 70,
-  cyclone: 80,
-  specter: 90,
-  nova: 100,
+  halo: 5,
+  wisp: 15,
+  lance: 25,
+  swarm: 35,
+  flux: 45,
+  pendul: 55,
+  rails: 65,
+  cyclone: 75,
+  specter: 85,
+  nova: 95,
 };
 
 export function obstacleKindsForLevel(level: number): ObstacleKind[] {
@@ -1227,7 +1228,7 @@ export const PATTERNS: readonly Pattern[] = [
     obstacles: [{ dx: 0, w: 70, h: 130, kind: "halo", elev: 90 }],
     width: 70,
     minSpeed: 0,
-    minLevel: 10,
+    minLevel: 5,
   },
   {
     id: "haloGauntlet",
@@ -1238,7 +1239,7 @@ export const PATTERNS: readonly Pattern[] = [
     ],
     width: 914,
     minSpeed: 0,
-    minLevel: 13,
+    minLevel: 8,
   },
   {
     // Wisp: bobbing spirit orb — band moves but never opens a jump lane.
@@ -1246,7 +1247,7 @@ export const PATTERNS: readonly Pattern[] = [
     obstacles: [{ dx: 0, w: 56, h: 70, kind: "wisp", elev: 85 }],
     width: 56,
     minSpeed: 0,
-    minLevel: 20,
+    minLevel: 15,
   },
   {
     id: "wispSaw",
@@ -1256,7 +1257,7 @@ export const PATTERNS: readonly Pattern[] = [
     ],
     width: 494,
     minSpeed: 0,
-    minLevel: 23,
+    minLevel: 18,
   },
   {
     // Lance: long thin spear high up — too wide to clear over its top.
@@ -1264,7 +1265,7 @@ export const PATTERNS: readonly Pattern[] = [
     obstacles: [{ dx: 0, w: 200, h: 26, kind: "lance", elev: 150 }],
     width: 200,
     minSpeed: 0,
-    minLevel: 30,
+    minLevel: 25,
   },
   {
     id: "lanceSpike",
@@ -1274,7 +1275,7 @@ export const PATTERNS: readonly Pattern[] = [
     ],
     width: 614,
     minSpeed: 0,
-    minLevel: 33,
+    minLevel: 28,
   },
   {
     // Swarm: staggered orb trio — no lane over the top, walk under it.
@@ -1282,7 +1283,7 @@ export const PATTERNS: readonly Pattern[] = [
     obstacles: [{ dx: 0, w: 104, h: 96, kind: "swarm", elev: 85 }],
     width: 104,
     minSpeed: 0,
-    minLevel: 40,
+    minLevel: 35,
   },
   {
     id: "swarmPit",
@@ -1292,7 +1293,7 @@ export const PATTERNS: readonly Pattern[] = [
     ],
     width: 620,
     minSpeed: 0,
-    minLevel: 43,
+    minLevel: 38,
   },
   {
     // Flux net: charged half the cycle — run under any time, never jump in.
@@ -1300,7 +1301,7 @@ export const PATTERNS: readonly Pattern[] = [
     obstacles: [{ dx: 0, w: 110, h: 140, kind: "flux", elev: 85 }],
     width: 110,
     minSpeed: 0,
-    minLevel: 50,
+    minLevel: 45,
   },
   {
     id: "fluxBlock",
@@ -1310,7 +1311,7 @@ export const PATTERNS: readonly Pattern[] = [
     ],
     width: 590,
     minSpeed: 0,
-    minLevel: 53,
+    minLevel: 48,
   },
   {
     // Pendul: orb sweeping sideways at head height — aerial gear.
@@ -1318,7 +1319,7 @@ export const PATTERNS: readonly Pattern[] = [
     obstacles: [{ dx: 44, w: 60, h: 60, kind: "pendul", elev: 95 }],
     width: 148, // sweep footprint: w + 2 * PENDUL_SHIFT_AMP
     minSpeed: 0,
-    minLevel: 60,
+    minLevel: 55,
   },
   {
     id: "pendulSpikes",
@@ -1329,7 +1330,7 @@ export const PATTERNS: readonly Pattern[] = [
     ],
     width: 658,
     minSpeed: 520,
-    minLevel: 63,
+    minLevel: 58,
   },
   {
     // Rails: twin stacked bars — the only lane is under the lower one.
@@ -1337,7 +1338,7 @@ export const PATTERNS: readonly Pattern[] = [
     obstacles: [{ dx: 0, w: 120, h: 145, kind: "rails", elev: 85 }],
     width: 120,
     minSpeed: 0,
-    minLevel: 70,
+    minLevel: 65,
   },
   {
     id: "railsSaw",
@@ -1347,7 +1348,7 @@ export const PATTERNS: readonly Pattern[] = [
     ],
     width: 564,
     minSpeed: 0,
-    minLevel: 73,
+    minLevel: 68,
   },
   {
     // Cyclone: tall swaying funnel — the whole column is off-limits.
@@ -1355,7 +1356,7 @@ export const PATTERNS: readonly Pattern[] = [
     obstacles: [{ dx: 20, w: 70, h: 150, kind: "cyclone", elev: 85 }],
     width: 110, // sway footprint: w + 2 * CYCLONE_SWAY_AMP
     minSpeed: 0,
-    minLevel: 80,
+    minLevel: 75,
   },
   {
     id: "cycloneSpike",
@@ -1365,7 +1366,7 @@ export const PATTERNS: readonly Pattern[] = [
     ],
     width: 534,
     minSpeed: 0,
-    minLevel: 83,
+    minLevel: 78,
   },
   {
     // Specter: solid/ghost on a cycle, but jumping in is never worth it.
@@ -1373,7 +1374,7 @@ export const PATTERNS: readonly Pattern[] = [
     obstacles: [{ dx: 0, w: 80, h: 130, kind: "specter", elev: 88 }],
     width: 80,
     minSpeed: 0,
-    minLevel: 90,
+    minLevel: 85,
   },
   {
     id: "specterSpike",
@@ -1383,7 +1384,7 @@ export const PATTERNS: readonly Pattern[] = [
     ],
     width: 514,
     minSpeed: 0,
-    minLevel: 93,
+    minLevel: 88,
   },
   {
     // Nova: the capstone — orb with an orbiting satellite, all air denied.
@@ -1391,7 +1392,7 @@ export const PATTERNS: readonly Pattern[] = [
     obstacles: [{ dx: 54, w: 64, h: 64, kind: "nova", elev: 110 }],
     width: 172, // orbit footprint: w + 2 * (NOVA_ORBIT_R + NOVA_SAT_R)
     minSpeed: 0,
-    minLevel: 100,
+    minLevel: 95,
   },
 ];
 
