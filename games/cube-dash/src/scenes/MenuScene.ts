@@ -353,7 +353,7 @@ export class MenuScene extends Phaser.Scene {
       this.buildAttract(); // demo runner wears the newly picked skin
     } else {
       this.charName
-        .setText(`🔒 ${spec.name} — clear level ${spec.minLevel - 1}`)
+        .setText(`🔒 ${spec.name} — clear World ${spec.world}`)
         .setColor("#5c667d");
     }
   }

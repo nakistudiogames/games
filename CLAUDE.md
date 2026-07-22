@@ -217,7 +217,10 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    / Frost Ridge (118, peaks) / Toxic Swamp (126, mushrooms) /
                    Gilded Dunes (124, ruins) / Deep Abyss (96, tendrils) /
                    Aurora Summit (150, spires) / Mirror Mirage (120, arches,
-                   whole-tone) / Verdant Hollow (116, pines) / Rust Foundry
+                   whole-tone) / Volt Grid (134, pylons, E-minor arps — was
+                   Verdant Hollow/pines until 2026-07-21, electrified per
+                   user so its clear unlocks Bolt; accent LEVEL_COLORS[9]
+                   now 0xd4e157) / Rust Foundry
                    (140, stacks) / Storm Shelf (128, thunderheads) / Inverted
                    Citadel (110, citadel, harmonic minor) / Coral Shallows
                    (122, coral) / Bone Wastes (100, ribs, Phrygian) / Neon
@@ -424,8 +427,19 @@ games/cube-dash    Game #5, browser-playable. Display name "Dash the Cube"
                    real progress untouched. Characters:
                    cosmetic skins in src/characters.ts (pure data/rules,
                    tested) + characterView.ts (Phaser drawing, shared by game
-                   and menu preview) — dash/blaze/orb/prism/bolt (cube/ball/
-                   diamond shapes), unlock at unlockedLevel ≥ minLevel (1-5),
+                   and menu preview) — 21 SKINS, ONE PER WORLD (2026-07-21):
+                   dash = world-0 starter; every world's CLEAR unlocks its
+                   themed skin (minLevel = world*5+1, spec has `world` field,
+                   lock hint "clear World N"): pixel W1 / orb W2 (caves) /
+                   blaze W3 (magma) / frost W4 / spore W5 / scarab W6 /
+                   gulp W7 / prism W8 (aurora) / mirage W9 / bolt W10 (volt
+                   grid) / ingot W11 / nimbus W12 / spire W13 / pearl W14 /
+                   marrow W15 / cipher W16 / shard W17 / sol W18 / quasar
+                   W19 (NOT "nova" — that's the L100 hazard) / apex W20
+                   (cube/ball/diamond shapes; aura+trail styles now REPEAT
+                   across skins — uniqueness is the (shape,aura,trail)
+                   triple, tested; orb/blaze/prism/bolt worlds prescribed by
+                   user),
                    picker in menu; each skin has a SIGNATURE TRAIL (2026-07-21:
                    trailStyle streaks/embers/bubbles/glints/sparks — cube
                    afterimages / rising fire motes / growing rings / tumbling
@@ -509,7 +523,7 @@ npm run dev:flap   # flap-dash on Vite dev server
 npm run dev:word   # word-rush on Vite dev server
 npm run dev:cube   # cube-dash on Vite dev server
 npm test           # vitest (@mg/cloudsave 5 + @mg/leaderboard 6 + 15 + 12
-                   # + 9 + 8 + 154 = 209 tests, all green; cube-dash
+                   # + 9 + 8 + 155 = 210 tests, all green; cube-dash
                    # includes the ~74s bot playthrough suite)
 npm run typecheck  # tsc across workspaces (strict + noUncheckedIndexedAccess)
 npm run build      # production bundle (vite base './' so file:// works in Capacitor)

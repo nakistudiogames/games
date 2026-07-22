@@ -23,7 +23,7 @@ describe("worlds", () => {
     expect(worldForLevel(31).id).toBe("abyss");
     expect(worldForLevel(36).id).toBe("aurora");
     expect(worldForLevel(41).id).toBe("mirage");
-    expect(worldForLevel(46).id).toBe("verdant");
+    expect(worldForLevel(46).id).toBe("grid");
     expect(worldForLevel(51).id).toBe("foundry");
     expect(worldForLevel(56).id).toBe("storm");
     expect(worldForLevel(61).id).toBe("citadel");

@@ -104,16 +104,42 @@ export function ensureWorldTextures(scene: Phaser.Scene, world: WorldTheme): voi
           g.fillStyle(world.silLight, 0.9);
           g.fillRect(x, 320 - h, w, 5);
         }
-      } else if (world.silhouette === "pines") {
-        for (const [x, w, h] of [[0, 80, 180], [70, 110, 280], [180, 90, 220], [270, 120, 300], [380, 70, 160]] as const) {
+      } else if (world.silhouette === "pylons") {
+        // Transmission towers with sagging cables strung between them.
+        const towers = [[30, 70, 250], [180, 90, 300], [340, 70, 230]] as const;
+        for (const [x, w, h] of towers) {
+          const top = 320 - h;
           g.fillStyle(world.silDark, 1);
-          for (let t = 0; t < 3; t++) {
-            const tw = w * (1 - t * 0.25);
-            const ty = 320 - (h / 3) * (t + 1);
-            g.fillTriangle(x + (w - tw) / 2, 320 - (h / 3) * t, x + w - (w - tw) / 2, 320 - (h / 3) * t, x + w / 2, ty);
+          // Tapering lattice mast: two legs meeting near the top.
+          g.fillTriangle(x, 320, x + w, 320, x + w / 2, top);
+          g.fillStyle(world.silLight, 0.12);
+          g.fillTriangle(x + w * 0.18, 320, x + w / 2, top + 14, x + w / 2, 320);
+          // Crossarms.
+          g.fillStyle(world.silDark, 1);
+          g.fillRect(x - w * 0.25, top + 18, w * 1.5, 8);
+          g.fillRect(x - w * 0.1, top + 52, w * 1.2, 7);
+          // Insulator glints on the arm tips.
+          g.fillStyle(world.silLight, 0.9);
+          g.fillRect(x - w * 0.25, top + 26, 5, 8);
+          g.fillRect(x + w * 1.25 - 5, top + 26, 5, 8);
+          g.fillRect(x + w / 2 - 3, top, 6, 6);
+        }
+        // Sagging cables between neighboring masts (quadratic-ish arcs).
+        g.lineStyle(3, world.silLight, 0.45);
+        for (let i = 0; i < towers.length - 1; i++) {
+          const [ax, aw, ah] = towers[i]!;
+          const [bx, bw, bh] = towers[i + 1]!;
+          const x1 = ax + aw * 1.25, y1 = 320 - ah + 30;
+          const x2 = bx - bw * 0.25, y2 = 320 - bh + 30;
+          const steps = 8;
+          for (let s = 0; s < steps; s++) {
+            const t1 = s / steps, t2 = (s + 1) / steps;
+            const sag = 26;
+            g.lineBetween(
+              x1 + (x2 - x1) * t1, y1 + (y2 - y1) * t1 + sag * Math.sin(Math.PI * t1),
+              x1 + (x2 - x1) * t2, y1 + (y2 - y1) * t2 + sag * Math.sin(Math.PI * t2),
+            );
           }
-          g.fillStyle(world.silLight, 0.7);
-          g.fillTriangle(x + w * 0.35, 320 - h * 0.66, x + w / 2, 320 - h, x + w / 2, 320 - h * 0.66);
         }
       } else if (world.silhouette === "stacks") {
         for (const [x, w, h] of [[10, 60, 240], [110, 80, 180], [220, 55, 290], [320, 70, 210]] as const) {

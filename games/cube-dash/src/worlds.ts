@@ -18,7 +18,7 @@ export type SilhouetteStyle =
   | "tendrils"
   | "spires"
   | "arches"
-  | "pines"
+  | "pylons"
   | "stacks"
   | "thunderheads"
   | "citadel"
@@ -251,24 +251,26 @@ export const WORLDS: readonly WorldTheme[] = [
     },
   },
   {
-    id: "verdant",
-    name: "Verdant Hollow",
-    skyTop: 0x07160a,
-    skyBottomA: 0x1c4423,
-    skyBottomB: 0x123018,
-    haze: 0x1c4423,
-    silDark: 0x11301a,
-    silLight: 0x235232,
-    silhouette: "pines",
-    groundBase: 0x0b2010,
-    groundGrid: 0x1e4a2a,
-    // G-major forest lilt, 116 BPM — a gentle 3-against-4 skip in the lead.
+    // Was "Verdant Hollow" (pines) — reworked 2026-07-21 per user into an
+    // electricity world; clearing it unlocks the Bolt character.
+    id: "grid",
+    name: "Volt Grid",
+    skyTop: 0x0a0a16,
+    skyBottomA: 0x2e2c10,
+    skyBottomB: 0x1c1c0c,
+    haze: 0x33310f,
+    silDark: 0x14160a,
+    silLight: 0xd4e157,
+    silhouette: "pylons",
+    groundBase: 0x121208,
+    groundGrid: 0x8a8a1e,
+    // E-minor arc-welder arps, 134 BPM — buzzy off-beat hats like mains hum.
     music: {
-      bpm: 116,
-      bass: [G2, null, null, D3, null, null, C3, null, G2, null, null, B2, null, D3, null, null],
-      lead: [G5, null, null, B5, null, null, D5, null, E5, null, null, D5, null, G5, null, A5],
-      kick: [true, false, false, false, true, false, false, false, true, false, false, false, true, false, false, false],
-      hat: [false, false, true, false, false, true, false, false, false, false, true, false, false, true, false, true],
+      bpm: 134,
+      bass: [E2, null, E2, null, G2, null, null, A2, E2, null, E2, null, B2, null, A2, null],
+      lead: [E5, null, G5, B5, null, E5, null, FS5, G5, null, B5, E5, null, D5, null, B5],
+      kick: [true, false, false, false, true, false, false, false, true, false, false, false, true, false, true, false],
+      hat: [false, true, false, true, false, true, true, false, false, true, false, true, false, true, true, true],
     },
   },
   {
